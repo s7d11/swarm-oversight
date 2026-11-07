@@ -1,4 +1,4 @@
-# Swarm oversight with K-Veritas
+# Swarm oversight with K-VERITAS
 
 **Can a team of AI agents hide what it did, and can a tamper-evident record stop it?**
 
