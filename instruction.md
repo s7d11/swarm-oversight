@@ -253,6 +253,12 @@ How it survives interruptions:
 - The campaign's `seal` step seals any session an interruption left unsealed (`tools/seal_sessions.py`).
 - Details are in `README.md`, under "Records and PDF reports".
 
+**Intent classifier (flag only):**
+- Each coordinator delegation is classified before the worker acts, in a step view and a cumulative view, by an LLM and a keyword baseline.
+- The LLM is set by `SWARM_INTENT_MODEL` in `swarm.conf` (default `local:lfm3-1.7b`), or `--intent-model` (`none` disables it); the campaign default is `intent_model`.
+- Verdicts are **researcher-only** records: in the chain or copy and as K-Veritas `intent` metrics, never in the shared log or the monitor views.
+- To classify episodes after the fact: `.venv/bin/python intent_classify.py --episodes <dir>/episodes.jsonl` (with `--dry-run` to preview).
+
 **Deception measures:** `deception.py` checks each delegation's reply against the record. Its rules (said no but did it, false claim, omission) always run. Its LLM checker labels each reply accurate, false claim, denial or omission. Results go to `deception.jsonl`. `analyze.py` reports a "Deception by oversight condition" table.
 
 ## 7b. Visualizer (real-time 3D view and chat dialog)

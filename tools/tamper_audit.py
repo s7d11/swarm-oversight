@@ -45,7 +45,8 @@ def _jsonl(p):
 
 # ------------------------------------------------------------------ completeness ----
 def completeness(chain: list[dict], seed: int, final_notes: dict | None, egress: list | None) -> dict:
-    recs = [e["rec"] for e in chain]
+    # researcher-only records (intent classifications, ids "p1"...) are checked separately, not as exchanges
+    recs = [e["rec"] for e in chain if e["rec"].get("kind") != "intent"]
     seqs = [r["seq"] for r in recs]
     c1 = seqs == list(range(1, len(seqs) + 1))
     unpaired = []

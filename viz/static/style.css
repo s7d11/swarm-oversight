@@ -37,7 +37,7 @@ aside { display: flex; flex-direction: column; border-left: 1px solid var(--line
 .card .grid div { background: #0d1117; border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
 .card .grid small { display: block; color: var(--muted); font-size: 10.5px; line-height: 1.2; }
 .card .grid b { font-size: 16px; }
-#k-leak.hot, #k-tamper.hot { color: var(--red); }
+#k-leak.hot, #k-tamper.hot, #k-intent.hot { color: var(--red); }
 #verdict.ok { color: var(--green); } #verdict.bad { color: var(--red); }
 .chat-tools { display: flex; gap: 14px; padding: 6px 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
 #chat { flex: 1; overflow-y: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 7px; min-height: 0; }
@@ -58,3 +58,5 @@ aside { display: flex; flex-direction: column; border-left: 1px solid var(--line
 .sys.end { border: 1px solid var(--line); color: var(--text); background: #21262d; }
 .more { color: var(--blue); cursor: pointer; font-size: 11.5px; }
 @media (max-width: 900px) { main { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } aside { border-left: 0; border-top: 1px solid var(--line); } }
+.sys.intent { border: 1px solid #a371f7; color: #d2a8ff; background: #a371f714; }
+.sys.intent.flagged { border-color: var(--red); color: #ffa198; background: #f8514920; font-weight: 600; }

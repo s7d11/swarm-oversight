@@ -6,7 +6,7 @@ max_parallel: 4
 local_slots: 2          # each local llama-server has 2 slots
 remote_slots: 4         # concurrent steps per Adaption model (the shared coordinator would otherwise cap batches at 2)
 credit_ceiling: 300
-defaults: {coordinator: gemma-4-31b-it, cond: AB, workers: 4, oversight: silent, seeds: "0-9"}
+defaults: {coordinator: gemma-4-31b-it, cond: AB, workers: 4, oversight: silent, seeds: "0-9", intent_model: "local:lfm3-1.7b"}
 
 groups:
   # ------------------------------------------------------------------ tier 1: core ----

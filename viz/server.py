@@ -111,6 +111,9 @@ class Annotator:
         if ev.get("type") != "record":
             return ev
         r = ev["rec"]
+        if r.get("kind") == "intent":
+            ev["flags"] = ["intent", str(r.get("label", ""))]
+            return ev
         flags = []
         if r.get("kind") == "msg" and is_refusal(str(r.get("content", ""))):
             flags.append("refusal")

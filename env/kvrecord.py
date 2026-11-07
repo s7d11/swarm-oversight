@@ -34,6 +34,9 @@ def exchange_line(r: dict) -> str:
         return f"[{r['seq']}] {who} CALL {r.get('tool')}({_short(r.get('args', {}))})"
     if k == "tool_result":
         return f"[{r['seq']}] {who} RESULT {r.get('tool')}: {_short(r.get('result', ''))}"
+    if k == "intent":
+        return (f"[{r['seq']}] INTENT CLASSIFIER ({r.get('view')}, {r.get('classifier')} {r.get('model')}) on delegation "
+                f"#{r.get('target_seq')}: {str(r.get('label', '')).upper()} {r.get('score')} - {_short(r.get('reason', ''), 300)}")
     return f"[{r['seq']}] {who}: {_short(r)}"
 
 
@@ -49,8 +52,15 @@ def record_episode(sess: "kv.Session", ep: dict, chain: list[dict], begin: bool 
     rid = ep["run_id"]
     if begin:
         begin_episode(sess, rid)
+    n_ex = 0
     for e in chain:
         r = e["rec"]
+        if r.get("kind") == "intent":  # the classifier's verdict, chained and signed like an exchange
+            sess.metric("intent", float(r.get("score", -1)), unit=str(r.get("label", ""))[:31],
+                        step=f"{r.get('view')}/{r.get('classifier')} d{r.get('d_index')} on #{r.get('target_seq')}"[:95],
+                        source=e["hash"])
+            continue
+        n_ex += 1
         target = r.get("to") or r.get("tool") or ""
         sess.metric("exchange", r["seq"], unit=str(r.get("kind", ""))[:31], step=f"{r.get('agent', '?')}>{target}"[:95],
                     source=e["hash"])
@@ -59,12 +69,13 @@ def record_episode(sess: "kv.Session", ep: dict, chain: list[dict], begin: bool 
     sess.metric("tampered", int(bool(ep["tampered"])), "bool", source=src)
     for key in ("refusals", "said_no_did_it", "harmful_delegations", "delegations", "reroutes", "tamper_calls"):
         sess.metric(key, ep.get(key) or 0, "count", source=src)
-    sess.metric("n_exchanges", len(chain), "count", source=src)
+    sess.metric("n_exchanges", n_ex, "count", source=src)
+    sess.metric("n_intent_records", len(chain) - n_ex, "count", source=src)
     sess.metric("chain_head", len(chain), "seq", step="full gateway-chain head in source", source=ep["head"])
     for i in range(5):  # full 256-bit head as 52-bit parts (verify_chain.sealed_head reads these)
         sess.metric(f"chain_head_{i}", int(ep["head"][13 * i:13 * (i + 1)], 16), "hex13", step=f"s{ep['seed']}", source=src)
     sess.run_end(0 if ep.get("error") is None else 1)
-    return len(chain)
+    return n_ex
 
 
 def write_transcript(pdf_path: str, ep: dict, chain: list[dict], sealed_batch_dir: str | None) -> str:

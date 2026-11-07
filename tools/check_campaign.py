@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import glob
 import json
 import os
 import sys
@@ -53,6 +54,27 @@ def main():
             if e.get("error") is None:
                 keys[R.episode_key(e["mode"], e.get("no_reroute"), e["cond"], e["models"]["worker"], e["models"]["coordinator"],
                                    e.get("oversight", "silent"), e.get("integrity", "kv"), e.get("n_workers", 4), e["seed"])] += 1
+    # intent classifier: every delegation of every episode has its verdicts in the researcher record, and (K-Veritas
+    # episodes) as 'intent' metrics in that episode's K-Veritas run
+    for path in {os.path.join(a.run_dir, s["results"], "episodes.jsonl") for s in st["steps"].values()
+                 if s["type"] == "batch" and (s.get("intent_model") or "none") != "none"}:
+        for line in open(path) if os.path.exists(path) else []:
+            e = json.loads(line)
+            if e.get("error") is not None or not e.get("delegations"):
+                continue
+            rec_path = e["paths"].get("chain") or e["paths"].get("copy")
+            recs = [json.loads(l) for l in open(rec_path)]
+            recs = [r.get("rec", r) for r in recs]
+            targets = {r.get("target_seq") for r in recs if r.get("kind") == "intent"}
+            if len(targets) < e["delegations"]:
+                problems.append(f"{e['run_id']}: intent records for {len(targets)} of {e['delegations']} delegations")
+            if e.get("integrity") == "kv" and e.get("sealed_dir"):
+                n_kv = 0
+                for f in glob.glob(os.path.join(e["sealed_dir"], e["batch"], "runs", "*.json")):
+                    if not f.endswith(".payload.json"):
+                        n_kv += sum(1 for m in json.load(open(f)).get("metrics", []) if m.get("name") == "intent")
+                if n_kv == 0:
+                    problems.append(f"{e['run_id']}: no 'intent' metrics in its K-Veritas session")
     dups = {k: n for k, n in keys.items() if n > 1}
     if dups:
         problems.append(f"duplicate clean episodes: {dups}")

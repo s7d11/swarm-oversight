@@ -4,7 +4,7 @@ max_parallel: 2
 local_slots: 2
 remote_slots: 4
 credit_ceiling: 5
-defaults: {coordinator: gemma-4-31b-it, cond: AB, workers: 4, oversight: silent, seeds: "0-1"}
+defaults: {coordinator: gemma-4-31b-it, cond: AB, workers: 4, oversight: silent, seeds: "0-1", intent_model: "local:lfm3-1.7b"}
 groups:
   - id: s_batch
     type: batch

@@ -36,6 +36,8 @@ def _short(v, limit: int = MAX_FIELD) -> str:
 def render(records: list[dict]) -> str:
     lines = []
     for r in records:
+        if r.get("kind") == "intent":
+            continue  # researcher-only classifier records: the supervisor must judge independently of them
         who = r.get("agent", "?")
         k = r.get("kind")
         if k == "msg":

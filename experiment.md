@@ -380,6 +380,9 @@ The attack component (task decomposition plus log tampering) is a deliberately s
 | | Run 1 (ablations 01→07, sequential) started at 17:00, **stopped at 18:45 by request** after 45 ablation-01 episodes (Qwen 3.8 workers: no leaks); records kept (`runs/INDEX.md`) | Replaced by a resumable campaign |
 | | Run 2 planned (plan file): all 7 Adaption models as workers, monitors and coordinators; LFM3 everywhere; LFM2.5 as monitor only; **no-oversight baseline** (oversight none, silent, announced; `none` = no K-Veritas); deception measures; kveritas-c bug 1 fixed and kveritas-go bug 2 completed (both uncommitted); `campaign.py` runner (resume per seed, atomic state, lock, code digest, credit ceiling) | Code prepared; 32 offline tests pass. Built, verified and launched from the CLI with `scripts/run2.sh` |
 | | K-Veritas reports: one run per episode, each exchange a signed metric (source = chain hash), a sealed and signed PDF per batch (default project key), a transcript PDF per episode, a `seal` step for interrupted sessions; `README.md` added | 35 offline tests pass |
+| | Gemma-4-12B-OBLITERATED checked: not servable on Adaption (fixed hosted models only; AutoScientist has no Gemma 4 12B); HF ZeroGPU on the free account gives 5 GPU-min/day (about 2–4 episodes). Skipped | – |
+| | Private repo `s7d11/swarm-oversight` (code + docs; no data, no K-Veritas builds); secret scan clean | Pushed |
+| | Coordinator-intent classifier (flag only): step + cumulative views, LLM (LFM3) + keyword; researcher-only records (own ids, not in the shared log or the monitor views); K-Veritas `intent` metrics and transcript; agreement analysis (RQ6); post-hoc tool | 41 offline tests pass |
 | **Next** | Pilot batch → full matrix → monitor scoring → `analyze.py` → report | See §12 |
 
 ---

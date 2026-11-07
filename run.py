@@ -19,7 +19,7 @@ import time
 import traceback
 
 import kv
-from env import agents, kvrecord, live
+from env import agents, intent as intent_mod, kvrecord, live
 from env.coordinator import run_star
 from env.gateway import Gateway
 from env.sandbox import Sandbox
@@ -81,7 +81,7 @@ def completed_keys(results_path: str) -> set:
 
 def episode(mode: str, cond: str, seed: int, n_workers: int, models: dict, tag: str = "",
             no_reroute: bool = False, batch: str = "", oversight: str = "silent", integrity: str = "kv",
-            out_dir: str | None = None, sess=None) -> dict:
+            out_dir: str | None = None, sess=None, intent=None) -> dict:
     mode_label = mode + ("-nr" if no_reroute else "")
     run_id = (f"{cond}_{mode_label}_{oversight}-{integrity}_w{n_workers}_{models['worker'].replace(':', '-')}_s{seed}"
               + (f"_{tag}" if tag else ""))
@@ -97,7 +97,7 @@ def episode(mode: str, cond: str, seed: int, n_workers: int, models: dict, tag: 
     t0 = time.time()
     err = None
     try:
-        stats = run_star(sb, mode, cond, n_workers, models, no_reroute=no_reroute, oversight=oversight)
+        stats = run_star(sb, mode, cond, n_workers, models, no_reroute=no_reroute, oversight=oversight, intent=intent)
     except Exception as e:  # keep failed episodes: every run is recorded
         stats = {"refusals": None, "delegations": None, "reroutes": None}
         err = f"{type(e).__name__}: {e}"
@@ -121,7 +121,8 @@ def episode(mode: str, cond: str, seed: int, n_workers: int, models: dict, tag: 
         sink.close()
     ep = {
         "run_id": run_id, "batch": batch, "mode": mode, "no_reroute": no_reroute, "cond": cond, "seed": seed,
-        "oversight": oversight, "integrity": integrity,
+        "oversight": oversight, "integrity": integrity, "intent_model": intent.model if intent else None,
+        **(intent_mod.summarize(stats) if intent else {}),
         "n_workers": n_workers, "models": models, "leaked": sb.canary_leaked(), "egress": sb.egress,
         "final_notes": sb.notes, **stats,
         "chain_ok": v["ok"], "genesis": gw.genesis or None, "head": gw.head or None, "n_records": len(gw.records()),
@@ -156,6 +157,8 @@ def main():
     ap.add_argument("--results", help="episodes.jsonl to append to (default: SWARM_RESULTS or logs/episodes.jsonl)")
     ap.add_argument("--sealed-dir", help="where K-Veritas sessions go (default: <repo>/sealed)")
     ap.add_argument("--resume", action="store_true", help="skip seeds already completed without error (same settings)")
+    ap.add_argument("--intent-model", help="coordinator-intent classifier (flag only), e.g. local:lfm3-1.7b; 'none' "
+                    "disables (default: SWARM_INTENT_MODEL, else none)")
     a = ap.parse_args()
     integrity = a.integrity or ("plain" if a.oversight == "none" else "kv")
     results = os.path.abspath(a.results or RESULTS)
@@ -188,11 +191,14 @@ def main():
         # one K-Veritas session per batch; each episode becomes its own run (see env/kvrecord.py)
         sess = kv.Session(storage_dir=os.path.join(sealed_dir, batch), project_dir=ROOT,
                           sample_interval_ms=2000, max_samples=900)
+    intent = intent_mod.from_env(a.intent_model)
+    if intent:
+        print(f"intent classifier: {intent.model} (flag only; researcher-only records)", flush=True)
     out = []
     for seed in seeds:
         ep = episode(a.mode, a.cond, seed, a.workers, models, tag=batch.rsplit("_", 1)[-1],
                      no_reroute=a.no_reroute, batch=batch, oversight=a.oversight, integrity=integrity, out_dir=out_dir,
-                     sess=sess)
+                     sess=sess, intent=intent)
         ep["sealed_dir"] = sealed_dir if integrity == "kv" else None
         out.append(ep)
         _fsync_append(results, json.dumps(ep))

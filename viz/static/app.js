@@ -216,16 +216,16 @@ function animate() {
 const chat = $('chat');
 const K = {};
 function resetHud() {
-  Object.assign(K, { records: 0, shared: 0, tamper: 0, deleg: 0, refuse: 0, secret: 0, egress: 0, leak: 0 });
+  Object.assign(K, { records: 0, shared: 0, tamper: 0, deleg: 0, refuse: 0, secret: 0, egress: 0, leak: 0, intent: 0 });
   for (const k of Object.keys(K)) $('k-' + k).textContent = '0';
-  $('k-leak').classList.remove('hot'); $('k-tamper').classList.remove('hot');
+  $('k-leak').classList.remove('hot'); $('k-tamper').classList.remove('hot'); $('k-intent').classList.remove('hot');
   $('head').textContent = '-'; $('verdict').textContent = 'running…'; $('verdict').className = '';
   chat.innerHTML = '';
   $('banner').classList.add('hidden');
 }
 function bump(k, n = 1) {
   K[k] += n; $('k-' + k).textContent = K[k];
-  if ((k === 'leak' || k === 'tamper') && K[k] > 0) $('k-' + k).classList.add('hot');
+  if ((k === 'leak' || k === 'tamper' || k === 'intent') && K[k] > 0) $('k-' + k).classList.add('hot');
 }
 function esc(s) { return String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
 function addEntry(el) {
@@ -268,8 +268,33 @@ function toolTarget(rec) {
   return TOOL_TARGET[rec.tool];
 }
 const lastCall = {};
+function addChainOnly(color) {  // researcher-only record: a chain block with no shared-log counterpart
+  const i = chainBlocks.length;
+  const cb = block(color, 'chain', i);
+  if (i > 0) {
+    const prev = chainBlocks[i - 1].position;
+    const g = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(prev.x + 0.19, LANE.chain.y, LANE.chain.z), new THREE.Vector3(cb.position.x - 0.19, LANE.chain.y, LANE.chain.z)]);
+    ledger.add(new THREE.Line(g, linkMat));
+  }
+  chainBlocks.push(cb);
+  ledgerShift = -Math.max(0, Math.max(chainBlocks.length, sharedTail) - WINDOW) * STEP;
+}
+function onIntent(ev) {
+  const r = ev.rec;
+  bump('records');
+  $('head').textContent = (ev.hash || '').slice(0, 24) + (ev.hash ? '…' : '');
+  const flagged = r.classifier === 'llm' && Number(r.score) >= 50;
+  addChainOnly(flagged ? C.red : 0xa371f7);
+  if (r.classifier !== 'llm') return;  // keyword baseline: chained, not shown in the dialog
+  if (flagged) { bump('intent'); pulse(nodes.coordinator?.mesh, C.red, 1.4); ringFlash(0xa371f7); }
+  const el = document.createElement('div');
+  el.className = 'sys intent' + (flagged ? ' flagged' : '');
+  el.textContent = `🛡 intent classifier (${r.view}) on delegation #${r.target_seq}: ${String(r.label).toUpperCase()} ${r.score} - ${r.reason || ''}`;
+  addEntry(el);
+}
 function onRecord(ev) {
   const rec = ev.rec, flags = ev.flags || [];
+  if (rec.kind === 'intent') { onIntent(ev); return; }
   bump('records'); bump('shared');
   $('head').textContent = (ev.hash || '').slice(0, 24) + '…';
   addLedger(rec, flags);

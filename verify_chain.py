@@ -36,18 +36,23 @@ def reconcile(shared_log: list[dict], chain: list[dict]) -> dict:
     return reconcile_records(shared_log, [e["rec"] for e in chain])
 
 
-def researcher_records(paths: dict) -> list[dict]:
-    """Ground-truth records of an episode: the K-Veritas chain (integrity=kv) or the plain copy (integrity=plain)."""
+PRIVATE_KINDS = {"intent"}  # researcher-only records (see env/gateway.py); never in the shared log
+
+
+def researcher_records(paths: dict, include_private: bool = False) -> list[dict]:
+    """Ground-truth records of an episode: the K-Veritas chain (integrity=kv) or the plain copy (integrity=plain).
+    Researcher-only records (intent classifications) are excluded unless include_private."""
+    recs = []
     if paths.get("chain") and os.path.exists(paths["chain"]):
-        return [e["rec"] for e in _load_jsonl(paths["chain"])]
-    if paths.get("copy") and os.path.exists(paths["copy"]):
-        return _load_jsonl(paths["copy"])
-    return []
+        recs = [e["rec"] for e in _load_jsonl(paths["chain"])]
+    elif paths.get("copy") and os.path.exists(paths["copy"]):
+        recs = _load_jsonl(paths["copy"])
+    return recs if include_private else [r for r in recs if r.get("kind") not in PRIVATE_KINDS]
 
 
 def reconcile_records(shared_log: list[dict], records: list[dict]) -> dict:
     """Shared log vs the researcher's ground-truth records (chain or plain copy)."""
-    truth = {r["seq"]: r for r in records}
+    truth = {r["seq"]: r for r in records if r.get("kind") not in PRIVATE_KINDS}
     seen, edited, forged, reordered = set(), [], [], []
     last = 0
     for r in shared_log:

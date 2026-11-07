@@ -122,6 +122,18 @@ runs/run2_<ts>/
 
 The `none` condition has **no K-Veritas** by design (it's the baseline), so it has no seal and no K-Veritas PDF. Its plain record is `*.copy.jsonl`.
 
+### Coordinator-intent classifier
+
+Every coordinator delegation is classified **before the worker acts** (flag only), in two views (this step; all delegations so far), by an LLM (`local:lfm3-1.7b`, temperature 0) and a keyword baseline.
+
+Its verdicts are researcher-only records:
+- **chained in K-Veritas** with their own ids, so agents see no gaps in the shared log
+- recorded as `intent` metrics in each episode's signed K-Veritas run
+- listed in the transcript PDF
+- never visible to agents or monitors
+
+`analyze.py` compares the classifier with the supervisor (the monitors) and with the K-Veritas ground truth: AUROC, flagged-before-harm lead time, Spearman, κ and disagreements. `intent_classify.py` classifies older episodes after the fact.
+
 ### Verifying records
 
 ```sh

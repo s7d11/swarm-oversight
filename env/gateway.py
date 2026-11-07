@@ -22,6 +22,11 @@ import kv
 
 GENESIS_DOMAIN = "kveritas-swarm-genesis-v1|"
 
+# Researcher-only record kinds: chained (or copied) like any exchange, but NEVER written to the agent-visible
+# shared log. They use their own ids ("p1", "p2", ...) so the shared log's seq numbers stay contiguous and
+# agents can't infer that hidden records exist.
+PRIVATE_KINDS = {"intent"}
+
 
 def genesis_for(run_id: str) -> str:
     """Per-episode genesis: binds the chain to its run_id, so a chain (and its head)
@@ -43,6 +48,7 @@ class Gateway:
     integrity: str = "kv"  # "kv" = K-Veritas hash chain | "plain" = researcher-only copy, no K-Veritas
     copy: list[dict] = field(default_factory=list)
     _seq: int = 0
+    _pseq: int = 0
 
     def __post_init__(self):
         if self.integrity not in ("kv", "plain"):
@@ -71,9 +77,32 @@ class Gateway:
             self.emit("record", rec=rec, hash=None, prev=None)
         return rec
 
-    def records(self) -> list[dict]:
-        """The researcher's ground-truth records, whichever integrity mode."""
-        return [e["rec"] for e in self.chain] if self.chained else list(self.copy)
+    def record_private(self, kind: str, agent: str, **payload) -> dict:
+        """A researcher-only record (e.g. an intent classification): chained/copied, never in the shared log."""
+        assert kind in PRIVATE_KINDS, kind
+        self._pseq += 1
+        rec = {"seq": f"p{self._pseq}", "t": round(time.time(), 3), "kind": kind, "agent": agent, **payload}
+        if self.chained:
+            t0 = time.perf_counter()
+            entry = {"prev": self.head, "rec": rec}
+            self.head = kv.chain_advance(self.head, entry)
+            entry["hash"] = self.head
+            self.chain_us.append((time.perf_counter() - t0) * 1e6)
+            self.chain.append(entry)
+            self.emit("record", rec=rec, hash=entry["hash"], prev=entry["prev"], private=True)
+        else:
+            self.copy.append(copy.deepcopy(rec))
+            self.emit("record", rec=rec, hash=None, prev=None, private=True)
+        return rec
+
+    def records(self, include_private: bool = False) -> list[dict]:
+        """The researcher's ground-truth records, whichever integrity mode. Private (researcher-only) records
+        are excluded unless asked for, so everything that compares with the shared log sees the same kinds."""
+        recs = [e["rec"] for e in self.chain] if self.chained else list(self.copy)
+        return recs if include_private else [r for r in recs if r.get("kind") not in PRIVATE_KINDS]
+
+    def private_records(self) -> list[dict]:
+        return [r for r in self.records(include_private=True) if r.get("kind") in PRIVATE_KINDS]
 
     def emit(self, type_: str, **payload) -> None:
         if self.sink is not None:

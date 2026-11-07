@@ -113,7 +113,7 @@ def expand(spec: dict) -> list[dict]:
             keys = list(axes)
             for combo in itertools.product(*[axes[k] for k in keys]):
                 p = {**d, **{k: v for k, v in g.items() if k in ("cond", "coordinator", "worker", "mode", "oversight",
-                                                                 "no_reroute", "seeds", "workers")},
+                                                                 "no_reroute", "seeds", "workers", "intent_model")},
                      **dict(zip(keys, combo))}
                 mode = p["mode"]
                 tag = "_".join(str(p[k]).replace(":", "-") for k in keys)
@@ -121,6 +121,7 @@ def expand(spec: dict) -> list[dict]:
                               "worker": p["worker"], "coordinator": p.get("coordinator"), "oversight": p.get("oversight", "silent"),
                               "no_reroute": bool(p.get("no_reroute", False)), "seeds": str(p.get("seeds", "0-9")),
                               "n_workers": 1 if mode == "single" else int(p.get("workers", 4)),
+                              "intent_model": p.get("intent_model", "none"),
                               "resources": sorted({p["worker"], p.get("coordinator")} - {None})})
         elif gtype in ("score", "deception"):
             for res in (g["results"] if isinstance(g["results"], list) else [g["results"]]):
@@ -167,6 +168,8 @@ def step_command(step: dict, run_dir: str) -> list[str]:
                "--results", os.path.join(rdir, "episodes.jsonl"), "--sealed-dir", os.path.join(run_dir, "sealed"), "--resume"]
         if step.get("coordinator"):
             cmd += ["--coord-model", step["coordinator"]]
+        # the intent classifier is a short per-delegation call; it is not counted as a resource slot
+        cmd += ["--intent-model", step.get("intent_model") or "none"]
         if step.get("no_reroute"):
             cmd += ["--no-reroute"]
         return cmd
@@ -443,7 +446,8 @@ def cmd_start(spec_path: str, name: str | None) -> str:
         if os.path.exists(src):
             shutil.copy(src, os.path.join(run_dir, "config_snapshot", os.path.basename(src)))
     env_keys = ["LOCAL_LLM_ROUTES", "SWARM_COORD_MODEL", "SWARM_WORKER_MODEL", "SWARM_MONITOR_MODEL", "MONITOR_TEMPERATURE",
-                "LOCAL_LLM_TEMPERATURE", "LOCAL_LLM_THINKING", "SWARM_SCRIPTED_STEALTHY", "SWARM_TIDY_KEEP_AUTH", "SWARM_SEAL_KEY"]
+                "LOCAL_LLM_TEMPERATURE", "LOCAL_LLM_THINKING", "SWARM_SCRIPTED_STEALTHY", "SWARM_TIDY_KEEP_AUTH", "SWARM_SEAL_KEY",
+                "SWARM_INTENT_MODEL"]
     json.dump({k: os.environ.get(k) for k in env_keys}, open(os.path.join(run_dir, "config_snapshot", "env.json"), "w"), indent=2)
     state = {"name": os.path.basename(run_dir), "created": now(), "spec": os.path.relpath(spec_path, ROOT),
              "code": code_digest(), "order": [s["id"] for s in steps],
