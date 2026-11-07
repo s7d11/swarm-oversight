@@ -1,0 +1,21 @@
+# Smoke campaign: exercises every step type, the oversight arms and resume, cheaply (local LFM3 + deepseek-v4-flash).
+name: smoke
+max_parallel: 2
+local_slots: 2
+remote_slots: 4
+credit_ceiling: 5
+defaults: {coordinator: gemma-4-31b-it, cond: AB, workers: 4, oversight: silent, seeds: "0-1"}
+groups:
+  - id: s_batch
+    type: batch
+    results: s
+    matrix:
+      worker: ["local:lfm3-1.7b", deepseek-v4-flash]
+      mode: [attack]
+      oversight: [none, silent, announced]
+  - {id: s_score, type: score, after: [s_batch], results: [s], monitors: ["local:lfm3-1.7b"], views: [naive, chain, chain_audit], estimate_episodes: 12}
+  - {id: s_deception, type: deception, after: [s_batch], results: [s], checker: "local:lfm3-1.7b", estimate_episodes: 12}
+  - {id: s_audit, type: tamper_audit, after: [s_batch], results: [s]}
+  - {id: s_analyze, type: analyze, after: [s_score, s_deception], results: [s]}
+  # every K-Veritas session sealed + signed into a PDF, including batches cut by an interruption
+  - {id: s_seal, tier: 3, type: seal, after: [s_batch]}

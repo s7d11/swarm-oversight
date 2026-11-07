@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Swarm Oversight Viz</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<header>
+  <div class="brand">Swarm Oversight <span>· K-Veritas gateway</span></div>
+  <div class="controls">
+    <select id="episode" title="episode"></select>
+    <button id="play">Play</button>
+    <button id="live" title="follow the most recent live run">Follow live</button>
+    <button id="pause">Pause</button>
+    <label>speed
+      <select id="speed">
+        <option value="0.5">0.5×</option><option value="1">1×</option><option value="2">2×</option>
+        <option value="4" selected>4×</option><option value="8">8×</option><option value="0">instant</option>
+      </select>
+    </label>
+    <span id="badge" class="badge">idle</span>
+  </div>
+</header>
+<main>
+  <section id="stage">
+    <div id="banner" class="banner hidden"></div>
+    <div class="legend">
+      <span><i style="background:#58a6ff"></i>message</span>
+      <span><i style="background:#3fb9a6"></i>tool call</span>
+      <span><i style="background:#6e7681"></i>tool result</span>
+      <span><i style="background:#f85149"></i>secret / leak</span>
+      <span><i style="background:#d29922"></i>edited (shared log)</span>
+      <span><i style="background:#db61a2"></i>forged (shared log)</span>
+    </div>
+  </section>
+  <aside>
+    <div class="card" id="integrity">
+      <div class="row"><b>Run</b><span id="runid">-</span></div>
+      <div class="grid">
+        <div><small>records chained</small><b id="k-records">0</b></div>
+        <div><small>shared log entries</small><b id="k-shared">0</b></div>
+        <div><small>tampered entries</small><b id="k-tamper">0</b></div>
+        <div><small>delegations</small><b id="k-deleg">0</b></div>
+        <div><small>refusals (said)</small><b id="k-refuse">0</b></div>
+        <div><small>secret reads</small><b id="k-secret">0</b></div>
+        <div><small>public pastes</small><b id="k-egress">0</b></div>
+        <div><small>leaks</small><b id="k-leak">0</b></div>
+      </div>
+      <div class="row"><b>chain head</b><code id="head">-</code></div>
+      <div class="row"><b>verdict</b><span id="verdict">running…</span></div>
+    </div>
+    <div class="chat-tools">
+      <label><input type="checkbox" id="show-results"> tool results</label>
+      <label><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
+    </div>
+    <div id="chat"></div>
+  </aside>
+</main>
+<script type="module" src="app.js"></script>
+</body>
+</html>

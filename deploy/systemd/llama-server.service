@@ -1,0 +1,15 @@
+[Unit]
+Description=llama.cpp server (LFM2.5-8B-A1B, 131072 ctx, CUDA + CPU experts) for Hermes agent
+After=network.target llama-server-lfm3.service
+
+[Service]
+Type=simple
+User=seb
+Group=seb
+EnvironmentFile=/etc/default/llama-swarm
+ExecStart=/bin/sh -c 'exec "$LLAMA_BIN" -m "$LFM25_MODEL" --alias lfm2.5-8b --host 127.0.0.1 --port "$LFM25_PORT" --jinja -fa on -c "$CTX" -np "$LFM25_SLOTS" -kvu -ctk "$KV_TYPE" -ctv "$KV_TYPE" -cram "$CACHE_RAM_MIB" $LFM25_OFFLOAD $LFM25_ROPE'
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

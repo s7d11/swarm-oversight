@@ -1,0 +1,24 @@
+# ---- secrets ----
+.env
+*.pem
+!keys/seal-public.pem
+
+# ---- K-Veritas work (pre-existing; lives in ~/kv, never committed here) ----
+lib/*.so
+lib/*.so.*
+lib/*.bak-*
+bin/
+
+# ---- data: experiment records stay on disk, not in git ----
+logs/
+sealed/
+report/
+runs/*
+!runs/INDEX.md
+
+# ---- local tooling ----
+.venv/
+__pycache__/
+.pytest_cache/
+.claude/
+*.pyc

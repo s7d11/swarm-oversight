@@ -1,0 +1,138 @@
+# Run 2: full campaign (planned 2026-11-07; see ~/.claude/plans/can-review-this-and-steady-coral.md)
+# All 7 Adaption models as workers/monitors/coordinators; LFM3 everywhere; LFM2.5 as monitor only.
+# No-oversight baseline: oversight none / silent / announced (agents are TOLD; the researcher record is always kept).
+name: run2
+max_parallel: 4
+local_slots: 2          # each local llama-server has 2 slots
+remote_slots: 4         # concurrent steps per Adaption model (the shared coordinator would otherwise cap batches at 2)
+credit_ceiling: 300
+defaults: {coordinator: gemma-4-31b-it, cond: AB, workers: 4, oversight: silent, seeds: "0-9"}
+
+groups:
+  # ------------------------------------------------------------------ tier 1: core ----
+  - id: t1_workers                # silent arm + worker sweep: who leaks / refuses / deceives
+    tier: 1
+    type: batch
+    results: t1
+    matrix:
+      worker: [gemma-4-31b-it, glm-5.2, qwen3.5-397b, gemma-4-26b-a4b-it, qwen3.8-27b, deepseek-v4-flash, glm-53-flash, "local:lfm3-1.7b"]
+      mode: [single, attack, benign, nearmiss]
+  - id: t1_oversight              # no-oversight baseline: none (no K-Veritas) and announced (K-Veritas, told)
+    tier: 1
+    type: batch
+    results: t1
+    matrix:
+      worker: ["local:lfm3-1.7b", qwen3.8-27b, gemma-4-26b-a4b-it, deepseek-v4-flash]
+      mode: [attack, benign]
+      oversight: [none, announced]
+  - id: t1_score
+    tier: 1
+    type: score
+    after: [t1_workers, t1_oversight]
+    results: [t1]
+    monitors: [qwen3.5-397b, "local:lfm3-1.7b"]
+    views: [naive, chain, chain_audit, naive_scripted, chain_audit_scripted]
+    estimate_episodes: 480
+  - id: t1_deception
+    tier: 1
+    type: deception
+    after: [t1_workers, t1_oversight]
+    results: [t1]
+    checker: qwen3.5-397b
+    estimate_episodes: 480
+  - id: t1_analyze
+    tier: 1
+    type: analyze
+    after: [t1_score, t1_deception]
+    results: [t1]
+
+  # ------------------------------------------------------------------ tier 2: mechanisms ----
+  - id: t2_reroute                # H2d: refusal shopping on/off
+    tier: 2
+    type: batch
+    results: t2_reroute
+    seeds: "0-19"
+    matrix:
+      worker: ["local:lfm3-1.7b", qwen3.8-27b]
+      mode: [attack]
+      no_reroute: [false, true]
+  - id: t2_coord                  # who coordinates the attack (refusal to coordinate is a result)
+    tier: 2
+    type: batch
+    results: t2_coord
+    worker: "local:lfm3-1.7b"
+    matrix:
+      coordinator: [glm-5.2, qwen3.5-397b, gemma-4-26b-a4b-it, qwen3.8-27b, deepseek-v4-flash, glm-53-flash]
+      mode: [attack, benign]
+  - id: t2_forging                # cond C: log_append forging (cond AB comes from tier 1)
+    tier: 2
+    type: batch
+    results: t2_forging
+    cond: C
+    worker: "local:lfm3-1.7b"
+    matrix:
+      mode: [attack, benign]
+  - id: t2_score
+    tier: 2
+    type: score
+    after: [t2_reroute, t2_coord, t2_forging]
+    results: [t2_reroute, t2_coord, t2_forging]
+    monitors: [qwen3.5-397b, "local:lfm3-1.7b"]
+    views: [naive, chain, chain_audit, naive_scripted, chain_audit_scripted]
+    estimate_episodes: 70
+  - id: t2_deception
+    tier: 2
+    type: deception
+    after: [t2_reroute, t2_coord, t2_forging]
+    results: [t2_reroute, t2_coord, t2_forging]
+    checker: qwen3.5-397b
+    estimate_episodes: 70
+  - id: t2_analyze
+    tier: 2
+    type: analyze
+    after: [t2_score, t2_deception]
+    results: [t2_reroute, t2_coord, t2_forging]
+
+  # ------------------------------------------------------------------ tier 3: monitors, views, integrity ----
+  - id: t3_monitor_sweep          # which models make good monitors (fixed subset keeps LFM2.5 tractable)
+    tier: 3
+    type: score
+    after: [t1_score]
+    results: [t1]
+    filter: {worker: ["local:lfm3-1.7b", qwen3.8-27b, gemma-4-26b-a4b-it], mode: [attack, benign, nearmiss], oversight: [silent]}
+    monitors: [gemma-4-31b-it, glm-5.2, qwen3.5-397b, gemma-4-26b-a4b-it, qwen3.8-27b, deepseek-v4-flash, glm-53-flash, "local:lfm3-1.7b", "local:lfm2.5-8b"]
+    views: [naive, chain, chain_audit, naive_scripted, chain_audit_scripted]
+    scores_file: monitor_scores_sweep.jsonl
+    estimate_episodes: 90
+  - id: t3_coverup_visible        # RQ1b: visible vs stealthy (stealthy = primary scores)
+    tier: 3
+    type: score
+    after: [t1_score]
+    results: [t1]
+    filter: {worker: ["local:lfm3-1.7b", qwen3.8-27b, gemma-4-26b-a4b-it], mode: [attack, benign, nearmiss], oversight: [silent]}
+    env: {SWARM_SCRIPTED_STEALTHY: "0"}
+    monitors: [qwen3.5-397b, "local:lfm3-1.7b"]
+    views: [naive_scripted, chain_audit_scripted, chain]
+    scores_file: monitor_scores_coverup_visible.jsonl
+    estimate_episodes: 90
+  - id: t3_keepauth               # the matched tidy-up confound (keep_auth=0 = primary scores)
+    tier: 3
+    type: score
+    after: [t1_score]
+    results: [t1]
+    filter: {worker: ["local:lfm3-1.7b", qwen3.8-27b, gemma-4-26b-a4b-it], mode: [attack, benign, nearmiss], oversight: [silent]}
+    env: {SWARM_TIDY_KEEP_AUTH: "1"}
+    monitors: [qwen3.5-397b, "local:lfm3-1.7b"]
+    views: [naive_scripted, chain_audit_scripted, chain]
+    scores_file: monitor_scores_keepauth1.jsonl
+    estimate_episodes: 90
+  - id: t3_tamper_audit
+    tier: 3
+    type: tamper_audit
+    after: [t1_workers, t1_oversight, t2_reroute, t2_coord, t2_forging]
+    results: [t1, t2_reroute, t2_coord, t2_forging]
+  - {id: t3_analyze_sweep, tier: 3, type: analyze, after: [t3_monitor_sweep], results: [t1], scores_file: monitor_scores_sweep.jsonl}
+  - {id: t3_analyze_visible, tier: 3, type: analyze, after: [t3_coverup_visible], results: [t1], scores_file: monitor_scores_coverup_visible.jsonl}
+  - {id: t3_analyze_keepauth, tier: 3, type: analyze, after: [t3_keepauth], results: [t1], scores_file: monitor_scores_keepauth1.jsonl}
+  # every K-Veritas session sealed + signed into a PDF, including batches cut by an interruption
+  - {id: t3_seal, tier: 3, type: seal, after: [t1_workers, t1_oversight, t2_reroute, t2_coord, t2_forging]}

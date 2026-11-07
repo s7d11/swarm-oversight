@@ -1,0 +1,24 @@
+# Optional: resume a swarm campaign automatically at boot / after a crash.
+# Install (sudo):   sudo cp deploy/systemd/swarm-campaign@.service /etc/systemd/system/ && sudo systemctl daemon-reload
+# Enable for one campaign (instance = folder name under runs/):
+#   sudo systemctl enable --now swarm-campaign@run2_20261108T010203.service
+# Stop for good:   sudo systemctl disable --now swarm-campaign@run2_20261108T010203.service
+# The runner restores its own environment (runs/<name>/config_snapshot/env.json), so no EnvironmentFile is needed.
+[Unit]
+Description=swarm campaign runner (%i)
+After=network-online.target llama-server-lfm3.service llama-server.service
+Wants=network-online.target
+StartLimitIntervalSec=3600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=seb
+Group=seb
+WorkingDirectory=/home/seb/prima/swarm
+ExecStart=/home/seb/prima/swarm/.venv/bin/python campaign.py resume /home/seb/prima/swarm/runs/%i
+Restart=on-failure
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
