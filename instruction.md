@@ -214,7 +214,7 @@ Run IDs look like `AB_attack_w4_qwen3.8-27b_s3_20261107T140210`: condition, mode
 
 ## 7a. Campaigns: resumable runs (run 2 onwards)
 
-A campaign is a spec in `campaigns/*.yaml` (groups of batches, scoring, deception checks, tamper audit and analysis, in tiers). It runs in its own folder, `runs/<name>_<ts>/`, and **can be interrupted and resumed** without losing or duplicating work.
+A campaign is a spec in `campaigns/*.yaml` (groups of batches, scoring, deception checks, tamper audit and analysis, in tiers). It runs in its own folder, `runs/swarmKV<N>/`, and **can be interrupted and resumed** without losing or duplicating work.
 
 ```sh
 scripts/run2.sh                             # first time: build, verify, smoke-test the resume, then launch run 2

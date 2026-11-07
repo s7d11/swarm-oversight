@@ -436,10 +436,27 @@ def cmd_plan(spec_path: str) -> None:
     print(f"\n{len(steps)} steps; {tot_ep} episodes; estimated credits {tot_cr:.1f} (ceiling {spec.get('credit_ceiling', 300)})")
 
 
+RUN_PREFIX = "swarmKV"
+
+
+def next_run_name(spec: dict, name: str | None = None) -> str:
+    """Run folders are numbered: swarmKV1, swarmKV2, ... Smoke tests have their own series (swarmKV-smoke1, ...)
+    so tests don't use up run numbers. An explicit --name still wins. Existing folders are never renamed."""
+    if name:
+        return name
+    import re
+    smoke = "smoke" in str(spec.get("name", "")).lower()
+    series = f"{RUN_PREFIX}-smoke" if smoke else RUN_PREFIX
+    pat = re.compile(rf"^{re.escape(series)}(\d+)$")
+    taken = [int(m.group(1)) for d in os.listdir(os.path.join(ROOT, "runs")) if os.path.isdir(os.path.join(ROOT, "runs", d))
+             for m in [pat.match(d)] if m] if os.path.isdir(os.path.join(ROOT, "runs")) else []
+    return f"{series}{max(taken, default=0) + 1}"
+
+
 def cmd_start(spec_path: str, name: str | None) -> str:
     spec = yaml.safe_load(open(spec_path))
     steps = expand(spec)
-    run_dir = os.path.join(ROOT, "runs", f"{name or spec.get('name', 'run')}_{time.strftime('%Y%m%dT%H%M%S')}")
+    run_dir = os.path.join(ROOT, "runs", next_run_name(spec, name))
     os.makedirs(os.path.join(run_dir, "config_snapshot"), exist_ok=False)
     shutil.copy(spec_path, os.path.join(run_dir, "spec.yaml"))
     for src in (os.path.join(ROOT, "swarm.conf"), "/etc/default/llama-swarm"):
@@ -449,7 +466,8 @@ def cmd_start(spec_path: str, name: str | None) -> str:
                 "LOCAL_LLM_TEMPERATURE", "LOCAL_LLM_THINKING", "SWARM_SCRIPTED_STEALTHY", "SWARM_TIDY_KEEP_AUTH", "SWARM_SEAL_KEY",
                 "SWARM_INTENT_MODEL"]
     json.dump({k: os.environ.get(k) for k in env_keys}, open(os.path.join(run_dir, "config_snapshot", "env.json"), "w"), indent=2)
-    state = {"name": os.path.basename(run_dir), "created": now(), "spec": os.path.relpath(spec_path, ROOT),
+    state = {"name": os.path.basename(run_dir), "spec_name": spec.get("name"), "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+             "created": now(), "spec": os.path.relpath(spec_path, ROOT),
              "code": code_digest(), "order": [s["id"] for s in steps],
              "steps": {s["id"]: {**copy.deepcopy(s), "status": "pending", "attempts": 0, "credits": 0.0} for s in steps},
              "history": [{"event": "created", "t": now()}], "orphans": []}

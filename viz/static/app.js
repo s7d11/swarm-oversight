@@ -435,8 +435,32 @@ function open(runId, live = false) {
 }
 
 // -------------------------------------------------------------- controls ----
+async function loadRuns() {
+  // tolerate a server without /api/runs (older server.py still running): fall back to "all runs"
+  let runs = [];
+  try {
+    const r = await fetch('/api/runs');
+    if (r.ok) runs = await r.json();
+  } catch { runs = []; }
+  const sel = $('run');
+  const keep = sel.value || localGet('swarmviz.run') || 'all';
+  sel.innerHTML = '';
+  const all = document.createElement('option');
+  all.value = 'all'; all.textContent = `all runs (${runs.reduce((n, r) => n + r.episodes, 0)})`;
+  sel.appendChild(all);
+  for (const r of runs) {
+    const o = document.createElement('option');
+    o.value = r.run;
+    o.textContent = `${r.running ? '● ' : ''}${r.run} (${r.episodes})`;
+    sel.appendChild(o);
+  }
+  sel.value = [...sel.options].some((o) => o.value === keep) ? keep : 'all';
+}
+function localGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function localSet(k, v) { try { localStorage.setItem(k, v); } catch { /* storage unavailable */ } }
 async function loadEpisodes() {
-  const eps = await (await fetch('/api/episodes')).json();
+  const runSel = $('run').value || 'all';
+  const eps = (await (await fetch('/api/episodes')).json()).filter((e) => runSel === 'all' || e.run === runSel);
   const sel = $('episode');
   const keep = sel.value;
   sel.innerHTML = '';
@@ -467,7 +491,7 @@ function liveFollow(on) {
   if (livePoll) { clearInterval(livePoll); livePoll = null; }
   if (!on) return;
   const check = async () => {
-    const { run_id } = await (await fetch('/api/latest')).json();
+    const { run_id } = await (await fetch(`/api/latest?run=${encodeURIComponent($('run').value || 'all')}`)).json();
     if (run_id && run_id !== currentRun && (ended || !currentRun || !liveMode)) {
       loadEpisodes();
       open(run_id, true);
@@ -481,9 +505,14 @@ $('show-results').onchange = () => {};
 
 resize();
 animate();
-loadEpisodes().then(() => {
+$('run').onchange = () => { localSet('swarmviz.run', $('run').value); loadEpisodes(); if ($('live').classList.contains('on')) { liveFollow(false); liveFollow(true); } };
+loadRuns().then(() => {
+  const params = new URLSearchParams(location.search);
+  if (params.get('campaign')) { $('run').value = params.get('campaign'); }
+  return loadEpisodes();
+}).then(() => {
   const params = new URLSearchParams(location.search);
   if (params.get('run')) { $('episode').value = params.get('run'); open(params.get('run')); }
   else if (params.get('live')) liveFollow(true);
 });
-setInterval(loadEpisodes, 15000);
+setInterval(() => loadRuns().then(loadEpisodes), 15000);

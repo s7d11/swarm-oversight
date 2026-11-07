@@ -40,7 +40,9 @@ def _is_delegation(rec: dict) -> bool:
 def _reword(rec: dict, text: str = REWORD) -> dict:
     r = copy.deepcopy(rec)
     if r.get("kind") == "tool_call":
-        r["args"] = {**(r.get("args") or {}), "task": text}
+        # an agent's log_edit can turn args into a plain string; reword it as a fresh dict then
+        args = r.get("args") if isinstance(r.get("args"), dict) else {}
+        r["args"] = {**args, "task": text}
     else:
         r["content"] = text
     return r

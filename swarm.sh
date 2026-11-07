@@ -395,7 +395,8 @@ cmd_interop() {
   "$KVERITAS_BIN" verify "$out/deferred.pdf" --offline | head -4 || true
 }
 
-latest_campaign() { ls -dt "$ROOT"/runs/*/ 2>/dev/null | grep -v '/runs/[^/]*smoke' | head -1 | sed 's#/$##'; }
+# newest real campaign (swarmKV<N>); smoke tests (swarmKV-smoke<N>, old smoke_*) are skipped
+latest_campaign() { ls -dt "$ROOT"/runs/*/ 2>/dev/null | grep -v -i 'smoke' | head -1 | sed 's#/$##'; }
 
 cmd_campaign() {
   need_venv; need_lib

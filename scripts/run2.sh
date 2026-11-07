@@ -8,6 +8,8 @@
 #   scripts/run2.sh --from 6        # restart at a stage (1..7) after fixing something
 #   scripts/run2.sh --skip-smoke    # skip stage 6 (not recommended: it is the resume test)
 #   scripts/run2.sh --no-launch     # everything except launching run 2
+#   scripts/run2.sh --no-viz        # don't start the visualizer (by default it starts right after stage 1, also with --from N)
+# Run folders are numbered: runs/swarmKV1, swarmKV2, ...; smoke tests: runs/swarmKV-smoke1, ...
 #
 # Stages: 1 preflight  2 kveritas-c fix: build + ctest + rebuild lib  3 kveritas-go fix: gofmt/vet/test + bin/kveritas-dev
 #         4 C->Go interop check  5 offline tests + tamper audit  6 smoke campaign: kill -9 mid-episode, resume, check
@@ -26,13 +28,14 @@ SPEC="${SPEC:-campaigns/run2.yaml}"
 # (LFM2.5 on :18080), silently swapping LFM3 for LFM2.5.
 set -a; source "$ROOT/swarm.conf"; set +a
 [[ "${LOCAL_LLM_ROUTES:-}" == *"lfm3-1.7b="* ]] || { echo "LOCAL_LLM_ROUTES missing lfm3 route (swarm.conf)"; exit 1; }
-FROM=1; YES=0; SKIP_SMOKE=0; NO_LAUNCH=0
+FROM=1; YES=0; SKIP_SMOKE=0; NO_LAUNCH=0; NO_VIZ=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --from) FROM="$2"; shift 2 ;;
     --yes) YES=1; shift ;;
     --skip-smoke) SKIP_SMOKE=1; shift ;;
     --no-launch) NO_LAUNCH=1; shift ;;
+    --no-viz) NO_VIZ=1; shift ;;
     -h|--help) sed -n 2,20p "$0"; exit 0 ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
@@ -76,14 +79,34 @@ if run_stage 1; then
   ok "preflight"
 fi
 
+# ----------------------------------------------------------------------------- visualizer (always, unless --no-viz) ----
+# Started (or restarted, so it runs the current server.py) before any stage, whatever --from is, and left running
+# detached: it follows the smoke test and the run live. Logs: runs/viz.out
+start_viz() {
+  ps -eo pid=,args= | awk '$2 ~ /python$/ && $3=="viz/server.py" {print $1}' | xargs -r kill
+  sleep 1
+  nohup setsid ./swarm.sh viz > runs/viz.out 2>&1 &
+  for _ in 1 2 3 4 5 6 7 8 9 10; do curl -fs -o /dev/null http://127.0.0.1:8765/api/runs && break; sleep 1; done
+  if curl -fs -o /dev/null http://127.0.0.1:8765/api/runs; then
+    ok "visualizer up: http://127.0.0.1:8765/?live=1  (pick the run in the Run menu; it keeps running after this script)"
+  else
+    warn "visualizer did not start (see runs/viz.out); continuing without it"
+  fi
+}
+[[ $NO_VIZ -eq 1 ]] || start_viz
+
 # ---------------------------------------------------------------------------- 2 kveritas-c: build + test fix ----
 CUR=2
 if run_stage 2; then
   stage 2 "kveritas-c: build + ctest (bug 1 fix, uncommitted) and rebuild lib/libkveritas.so"
   ( cd "$KVC" && (sl diff --stat 2>/dev/null || true) )
-  cmake -S "$KVC" -B "$KVC/build" -DCMAKE_BUILD_TYPE=Release >/dev/null || fail "cmake configure"
-  cmake --build "$KVC/build" --parallel || fail "kveritas-c build"
-  ctest --test-dir "$KVC/build" --output-on-failure || fail "kveritas-c tests (see output above)"
+  # Tests must be a Debug build: kveritas-c's tests put real calls inside assert() (e.g. assert(mkdtemp(..)),
+  # assert(kv_session_init(..) == KV_OK)), and Release's -DNDEBUG compiles those calls away -> NULL session ->
+  # segfault (2026-11-07). Built outside the kveritas-c repo, in a cache folder.
+  KVC_TEST_BUILD="${KVC_TEST_BUILD:-$HOME/.cache/swarm/kveritas-c-debug}"
+  cmake -S "$KVC" -B "$KVC_TEST_BUILD" -DCMAKE_BUILD_TYPE=Debug >/dev/null || fail "cmake configure"
+  cmake --build "$KVC_TEST_BUILD" --parallel || fail "kveritas-c build"
+  ctest --test-dir "$KVC_TEST_BUILD" --output-on-failure || fail "kveritas-c tests (see output above)"
   ok "kveritas-c tests pass (includes test_kv_seal: destroy-before-seal regression)"
   [[ -f lib/libkveritas.so ]] && cp lib/libkveritas.so "lib/libkveritas.so.bak-$(date +%Y%m%dT%H%M%S)"
   ( cd "$KVC" && gcc -shared -fPIC -O2 -Iinclude -Isrc src/core/*.c src/crypto/*.c src/hardware/*.c src/provenance/*.c \
@@ -175,17 +198,12 @@ if run_stage 7 && [[ $NO_LAUNCH -eq 0 ]]; then
     read -r -p "Launch run 2 now? [y/N] " ans
     [[ "$ans" == y || "$ans" == Y ]] || { echo "not launched. Later: ./swarm.sh campaign start $SPEC"; exit 0; }
   fi
-  # (re)start the visualizer so it runs the current server.py (run-2 folders, no-oversight episodes)
-  ps -eo pid=,args= | awk '$2 ~ /python$/ && $3=="viz/server.py" {print $1}' | xargs -r kill
-  sleep 1
-  nohup setsid ./swarm.sh viz > runs/viz.out 2>&1 &
-  sleep 2
-  curl -fs -o /dev/null http://127.0.0.1:8765/ && echo "visualizer up" || warn "visualizer did not start (see runs/viz.out)"
+  [[ $NO_VIZ -eq 1 ]] || curl -fs -o /dev/null http://127.0.0.1:8765/api/runs || start_viz
   ./swarm.sh campaign start "$SPEC"
   echo
   echo "${b}run 2 is running detached.${n}"
   echo "  progress:   ./swarm.sh campaign status"
-  echo "  log:        tail -f \$(ls -dt runs/run2_*/ | head -1)campaign.log"
+  echo "  log:        tail -f \$(ls -dt runs/swarmKV[0-9]*/ | head -1)campaign.log"
   echo "  live view:  http://127.0.0.1:8765/?live=1"
   echo "  stop:       ./swarm.sh campaign stop        (resumable)"
   echo "  resume:     ./swarm.sh campaign resume      (after a crash, kill or reboot)"

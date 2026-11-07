@@ -93,7 +93,8 @@ def episode(mode: str, cond: str, seed: int, n_workers: int, models: dict, tag: 
     sb = Sandbox(gateway=gw, seed=seed)
     gw.emit("episode_start", run_id=run_id, batch=batch, mode=mode, no_reroute=no_reroute, cond=cond, seed=seed,
             models=models, workers=[f"worker{i + 1}" for i in range(n_workers)] if mode != "single" else ["worker1"],
-            genesis=gw.genesis, oversight=oversight, integrity=integrity)
+            genesis=gw.genesis, oversight=oversight, integrity=integrity,
+            results_dir=os.path.relpath(out_dir or os.path.join(ROOT, "logs"), ROOT))
     t0 = time.time()
     err = None
     try:

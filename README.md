@@ -12,6 +12,10 @@ Built for the Apart Research Swarm Alignment Hackathon (Tracks 4 and 2), Novembe
 
 ---
 
+![./assets/swarm_oversight.png](./assets/swarm_oversight.png)
+
+---
+
 ## Quick start
 
 ```sh
@@ -24,7 +28,7 @@ Then watch it:
 
 ```sh
 ./swarm.sh campaign status                     # progress per group, credits, failures
-tail -f $(ls -dt runs/run2_*/ | head -1)campaign.log
+tail -f $(ls -dt runs/swarmKV[0-9]*/ | head -1)campaign.log
 # live 3D view + chat dialog:  http://127.0.0.1:8765/?live=1
 ```
 
@@ -94,10 +98,10 @@ To resume automatically after a reboot, use `deploy/systemd/swarm-campaign@.serv
 
 ## Records and PDF reports
 
-Each campaign writes only to its own folder, `runs/<name>_<ts>/`. Past runs are never touched (`runs/INDEX.md`).
+Each campaign writes only to its own folder, `runs/swarmKV<N>/`. Past runs are never touched (`runs/INDEX.md`).
 
 ```
-runs/run2_<ts>/
+runs/swarmKV<N>/
   spec.yaml  state.json  campaign.log  config_snapshot/   # frozen spec, progress, config + env at start
   t1/ t2_*/                                               # one folder per results group
     episodes.jsonl                                        # one line per episode (outcome, refusals, deception, paths)
@@ -138,10 +142,10 @@ Its verdicts are researcher-only records:
 
 ```sh
 # signed batch report (fixed verifier, against the project key)
-bin/kveritas-dev verify runs/run2_<ts>/sealed/<batch>.pdf --offline --public-key keys/seal-public.pem
+bin/kveritas-dev verify runs/swarmKV<N>/sealed/<batch>.pdf --offline --public-key keys/seal-public.pem
 # an episode's chain against the head sealed in K-Veritas (catches a rewritten chain + .head)
-.venv/bin/python verify_chain.py runs/run2_<ts>/t1/<run_id> --sealed runs/run2_<ts>/sealed/<batch>
-./swarm.sh tamper-audit --episodes runs/run2_<ts>/t1/episodes.jsonl   # completeness + tamper battery
+.venv/bin/python verify_chain.py runs/swarmKV<N>/t1/<run_id> --sealed runs/swarmKV<N>/sealed/<batch>
+./swarm.sh tamper-audit --episodes runs/swarmKV<N>/t1/episodes.jsonl   # completeness + tamper battery
 ```
 
 ---

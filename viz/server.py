@@ -73,6 +73,17 @@ def find_episode(run_id: str) -> dict | None:
     return _fix_paths(*found) if found else None
 
 
+def run_of(rel_path: str) -> str:
+    """Which run an episode belongs to, from its results path (relative to the repo):
+    logs/smoke -> smoke, logs/pilot -> pilot, logs/ablations/... -> run1, runs/<name>_<ts>/... -> <name>_<ts>."""
+    parts = rel_path.replace(os.sep, "/").split("/")
+    if parts[0] == "runs" and len(parts) > 1:
+        return parts[1]
+    if parts[0] == "logs" and len(parts) > 1:
+        return {"smoke": "smoke", "pilot": "pilot", "ablations": "run1"}.get(parts[1], "logs (one-off)")
+    return "other"
+
+
 def list_episodes() -> list[dict]:
     seen, out = set(), []
     for p in episode_files():
@@ -81,7 +92,8 @@ def list_episodes() -> list[dict]:
             if rid in seen:  # duplicate run_id: keep the latest record only
                 out = [o for o in out if o["run_id"] != rid]
             seen.add(rid)
-            out.append({"run_id": rid, "file": os.path.relpath(p, ROOT), "oversight": e.get("oversight", "silent"),
+            out.append({"run_id": rid, "file": os.path.relpath(p, ROOT), "run": run_of(os.path.relpath(p, ROOT)),
+                        "oversight": e.get("oversight", "silent"),
                         "mode": e["mode"] + ("-nr" if e.get("no_reroute") else ""),
                         "cond": e["cond"], "seed": e["seed"], "worker": e["models"]["worker"],
                         "coordinator": e["models"]["coordinator"], "leaked": e["leaked"], "tampered": e["tampered"],
@@ -93,7 +105,10 @@ def list_episodes() -> list[dict]:
             continue
         evs = _jsonl(lf)
         st = next((e for e in evs if e["type"] == "episode_start"), {})
-        out.append({"run_id": rid, "file": "logs/live", "mode": st.get("mode", "?"), "cond": st.get("cond", "?"),
+        res = st.get("results_dir")
+        out.append({"run_id": rid, "file": (res + "/episodes.jsonl") if res else "logs/live",
+                    "run": run_of(res) if res else "live (unassigned)", "oversight": st.get("oversight", "silent"),
+                    "mode": st.get("mode", "?"), "cond": st.get("cond", "?"),
                     "seed": st.get("seed"), "worker": (st.get("models") or {}).get("worker", "?"),
                     "coordinator": (st.get("models") or {}).get("coordinator", "?"), "leaked": None, "tampered": None,
                     "n_records": sum(1 for e in evs if e["type"] == "record"),
@@ -188,9 +203,24 @@ class Handler(SimpleHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/api/episodes":
             return self._json(list_episodes())
+        if u.path == "/api/runs":
+            runs = {}
+            for e in list_episodes():
+                r = runs.setdefault(e["run"], {"run": e["run"], "episodes": 0, "running": 0})
+                r["episodes"] += 1
+                r["running"] += e["status"] == "running"
+            return self._json(sorted(runs.values(), key=lambda r: r["run"]))
         if u.path == "/api/latest":
-            p = os.path.join(LIVE, "latest.txt")
-            return self._json({"run_id": open(p).read().strip() if os.path.exists(p) else None})
+            # newest live episode, optionally restricted to one run (?run=run2_2026...)
+            want = parse_qs(u.query).get("run", [""])[0]
+            if not want or want == "all":
+                p = os.path.join(LIVE, "latest.txt")
+                return self._json({"run_id": open(p).read().strip() if os.path.exists(p) else None})
+            mine = [e for e in list_episodes() if e["run"] == want and e.get("live")]
+            if not mine:
+                return self._json({"run_id": None})
+            newest = max(mine, key=lambda e: os.path.getmtime(os.path.join(LIVE, f"{e['run_id']}.jsonl")))
+            return self._json({"run_id": newest["run_id"]})
         if u.path == "/api/stream":
             return self.stream(parse_qs(u.query).get("run_id", [""])[0])
         return super().do_GET()
