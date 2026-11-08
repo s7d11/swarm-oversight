@@ -7,7 +7,8 @@ For each <dir>/<batch>/session.json with "sealed": false:
     can't be loaded or signed. They are removed from the list, the original is kept as session.json.orig, and
     they are listed in incomplete_runs.json next to it (nothing is deleted, nothing is hidden)
   * the session is reopened (kv_session_load) and sealed -> <dir>/<batch>.pdf
-Already-sealed and empty sessions are skipped. Exit 0 if every remaining session is sealed.
+Already-sealed and empty sessions are skipped. With SWARM_OFFLOAD=hf each sealed session is
+uploaded (session .tar.xz + signed PDF) and deleted locally (env/store.py). Exit 0 if every remaining session is sealed.
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import kv  # noqa: E402
+from env import store  # noqa: E402
 from env.kvrecord import default_seal_key  # noqa: E402
 
 
@@ -65,6 +67,11 @@ def main():
         sdir = os.path.dirname(sp)
         try:
             print(f"{os.path.basename(sdir)}: {seal_one(sdir, key)}", flush=True)
+            if store.enabled() and os.path.exists(sdir.rstrip("/") + ".pdf"):
+                r = store.offload_sealed(os.path.dirname(sdir), os.path.basename(sdir))
+                if r.get("pending"):
+                    failed += 1
+                print(f"  offload: {r.get('files') or r}", flush=True)
         except Exception as e:  # keep going: one bad session must not stop the others
             failed += 1
             print(f"{os.path.basename(sdir)}: FAILED {type(e).__name__}: {e}", flush=True)

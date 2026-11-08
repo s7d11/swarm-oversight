@@ -381,6 +381,7 @@ class Campaign:
                 self.state["history"].append({"event": "finished", "t": now()})
                 self.save()
                 self.log(f"campaign finished; credits {self.credits_used()}")
+                self.finalize_offload()
                 return
             over_budget = self.credits_used() >= ceiling
             if over_budget and not self.state.get("budget_paused"):
@@ -398,6 +399,18 @@ class Campaign:
                 self.log("idle: credit ceiling reached and nothing running")
                 return
             time.sleep(2)
+
+    def finalize_offload(self) -> None:
+        """SWARM_OFFLOAD=hf: upload what's left of the run (summaries, orphans, unsealed sessions) and empty the
+        folder (tools/offload.py --finalize). SWARM_OFFLOAD_FINALIZE=0 keeps it (the smoke test checks it first)."""
+        if os.environ.get("SWARM_OFFLOAD", "").lower() != "hf" or os.environ.get("SWARM_OFFLOAD_FINALIZE", "1") == "0":
+            return
+        self.log("offloading the run folder to the dataset (tools/offload.py --finalize)")
+        rc = subprocess.call([PY, os.path.join(ROOT, "tools", "offload.py"), self.dir, "--finalize"],
+                             stdout=open(os.path.join(self.dir, "offload.out"), "a"), stderr=subprocess.STDOUT)
+        if rc != 0:
+            self.log(f"offload incomplete (exit {rc}): files kept; rerun: .venv/bin/python tools/offload.py "
+                     f"{os.path.relpath(self.dir, ROOT)} --finalize")
 
     def record_orphans(self) -> None:
         """Episodes interrupted mid-way: a live feed without episode_end and no episodes.jsonl record."""
@@ -464,7 +477,7 @@ def cmd_start(spec_path: str, name: str | None) -> str:
             shutil.copy(src, os.path.join(run_dir, "config_snapshot", os.path.basename(src)))
     env_keys = ["LOCAL_LLM_ROUTES", "SWARM_COORD_MODEL", "SWARM_WORKER_MODEL", "SWARM_MONITOR_MODEL", "MONITOR_TEMPERATURE",
                 "LOCAL_LLM_TEMPERATURE", "LOCAL_LLM_THINKING", "SWARM_SCRIPTED_STEALTHY", "SWARM_TIDY_KEEP_AUTH", "SWARM_SEAL_KEY",
-                "SWARM_INTENT_MODEL"]
+                "SWARM_INTENT_MODEL", "SWARM_OFFLOAD", "SWARM_HF_REPO", "SWARM_OFFLOAD_FINALIZE"]
     json.dump({k: os.environ.get(k) for k in env_keys}, open(os.path.join(run_dir, "config_snapshot", "env.json"), "w"), indent=2)
     state = {"name": os.path.basename(run_dir), "spec_name": spec.get("name"), "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
              "created": now(), "spec": os.path.relpath(spec_path, ROOT),
@@ -494,6 +507,9 @@ def cmd_resume(run_dir: str, allow_code_change: bool) -> None:
 
 
 def cmd_status(run_dir: str) -> None:
+    if not os.path.exists(os.path.join(run_dir, "state.json")) and os.path.exists(os.path.join(run_dir, "OFFLOADED.md")):
+        print(open(os.path.join(run_dir, "OFFLOADED.md")).read())
+        return
     st = json.load(open(os.path.join(run_dir, "state.json")))
     alive = False
     try:

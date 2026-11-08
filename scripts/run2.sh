@@ -76,6 +76,12 @@ if run_stage 1; then
   fi
   mkdir -p keys && openssl pkey -in "$KEYDIR/seal-key.pem" -pubout -out keys/seal-public.pem 2>/dev/null || fail "public key export"
   ok "signing key ready; public key: keys/seal-public.pem (verifiers use it as --public-key)"
+  if [[ "${SWARM_OFFLOAD:-}" == hf ]]; then
+    "$PY" -c "import huggingface_hub" 2>/dev/null || "$PY" -m pip install -q "huggingface_hub>=1.0" hf_xet || fail "huggingface_hub install"
+    vis="$("$PY" -c "from env import store; store.ensure_repo(); print('private' if store.api().dataset_info(store.repo_id()).private else 'PUBLIC')" 2>&1 | tail -1)"
+    [[ "$vis" == private ]] || fail "offload dataset $SWARM_HF_REPO is not usable as a PRIVATE dataset: $vis (HF_KEY in .env?)"
+    ok "offload: every episode goes to the private dataset $SWARM_HF_REPO and is deleted locally"
+  fi
   ok "preflight"
 fi
 
@@ -146,6 +152,8 @@ fi
 CUR=6
 if run_stage 6 && [[ $SKIP_SMOKE -eq 0 ]]; then
   stage 6 "smoke campaign: start, kill -9 mid-episode, resume, check (local LFM3 + deepseek-v4-flash, < 1 credit)"
+  # the smoke run is checked on the dataset first, then finalized + removed from it below (not a result)
+  export SWARM_OFFLOAD_FINALIZE=0
   SMOKE_DIR="$("$PY" campaign.py start campaigns/smoke.yaml --create-only | tail -1)"
   echo "smoke folder: ${SMOKE_DIR#$ROOT/}"
   nohup setsid "$PY" campaign.py resume "$SMOKE_DIR" > "$SMOKE_DIR/runner.out" 2>&1 &
@@ -174,18 +182,50 @@ if run_stage 6 && [[ $SKIP_SMOKE -eq 0 ]]; then
   "$PY" campaign.py status "$SMOKE_DIR"
   "$PY" tools/check_campaign.py "$SMOKE_DIR" --expect-orphans || fail "smoke campaign check"
   # every sealed batch PDF must verify with the fixed Go verifier against our public key
+  PDF_DIR="$SMOKE_DIR/sealed"
+  if [[ "${SWARM_OFFLOAD:-}" == hf ]]; then
+    # offloaded: nothing may be left on disk, and the PDFs are verified as downloaded back from the dataset
+    left=$(find "$SMOKE_DIR" \( -name '*.chain.jsonl' -o -name '*.shared.jsonl' -o -name '*.copy.jsonl' -o -name '*.tar.xz' \
+           -o -name '*.transcript.pdf' \) | wc -l)
+    [[ $left -eq 0 ]] || fail "$left record file(s) still on disk after offload"
+    PDF_DIR="$(mktemp -d)"
+    "$PY" - "$SMOKE_DIR" "$PDF_DIR" <<'PYEOF' || fail "could not fetch the sealed PDFs from the dataset"
+import os, sys
+sys.path.insert(0, os.getcwd())
+from env import store
+run, dest = sys.argv[1], sys.argv[2]
+files = store.list_remote(store.repo_path(run))
+pdfs = [f for f in files if f.endswith(".pdf") and "/sealed/" in f]
+trs = [f for f in files if f.endswith(".transcript.pdf")]
+eps = [f for f in files if f.endswith(".tar.xz") and "/sealed/" not in f]
+for f in pdfs:
+    p = store.fetch(f, dest)
+    os.replace(p, os.path.join(dest, os.path.basename(f)))
+open(os.path.join(dest, "counts"), "w").write(f"{len(eps)} {len(trs)}\n")
+print(f"dataset: {len(eps)} episode archives, {len(trs)} transcripts, {len(pdfs)} sealed PDFs")
+PYEOF
+    read -r neps ntr < "$PDF_DIR/counts"
+    [[ $neps -gt 0 ]] || fail "no episode archives in the dataset"
+  else
+    ntr=$(find "$SMOKE_DIR" -name '*.transcript.pdf' | wc -l)
+  fi
   npdf=0
-  for pdf in "$SMOKE_DIR"/sealed/*.pdf; do
+  for pdf in "$PDF_DIR"/*.pdf; do
     [[ -f "$pdf" ]] || continue
     npdf=$((npdf + 1))
     st="$("$ROOT/bin/kveritas-dev" verify "$pdf" --offline --public-key keys/seal-public.pem 2>&1 | head -1)"
     echo "  $(basename "$pdf"): $st"
     [[ "$st" == TAMPERED* || -z "$st" ]] && fail "sealed PDF does not verify: $pdf"
   done
-  [[ $npdf -gt 0 ]] || fail "no sealed PDFs in $SMOKE_DIR/sealed (K-Veritas reports missing)"
-  ntr=$(find "$SMOKE_DIR" -name '*.transcript.pdf' | wc -l)
+  [[ $npdf -gt 0 ]] || fail "no sealed PDFs (K-Veritas reports missing)"
   [[ $ntr -gt 0 ]] || fail "no episode transcript PDFs"
   ok "$npdf sealed batch PDF(s) verify; $ntr episode transcript PDF(s)"
+  if [[ "${SWARM_OFFLOAD:-}" == hf ]]; then
+    rm -rf "$PDF_DIR"
+    "$PY" tools/offload.py "$SMOKE_DIR" --finalize --purge-remote || fail "smoke offload finalize"
+    ok "smoke run removed from the dataset and the disk (only ${SMOKE_DIR#$ROOT/}/OFFLOADED.md is left)"
+  fi
+  unset SWARM_OFFLOAD_FINALIZE
   ok "smoke campaign: interrupted, resumed, complete, no duplicates (${SMOKE_DIR#$ROOT/})"
 fi
 

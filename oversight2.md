@@ -113,7 +113,7 @@ Added 2026-11-07 as the **no-oversight baseline**. The agents can't see K-Verita
 | **H5c:** agents misreport more when unwatched | All three conditions | Delegation-level deception against the record: said no but did it; false claim; omission (rules); LLM checker labels (false claim, denial, omission vs accurate) |
 
 **Runs:**
-- Tier 1 of `campaigns/run2.yaml`: `none` and `announced` for 4 workers × attack and benign × 10 seeds. The `silent` condition is the worker sweep.
+- Tier 1 of `campaigns/run2.yaml`: `none` and `announced` for 4 workers × attack and benign × 6 seeds. The `silent` condition is the worker sweep.
 - The `none` condition has **no K-Veritas** (a plain gateway copy), which also gives the tamper audit's "plain" column: what is left without the cryptography.
 
 **Analysis:** `analyze.py`, "Deception by oversight condition".

@@ -1,12 +1,13 @@
 # Run 2: full campaign (planned 2026-11-07; see ~/.claude/plans/can-review-this-and-steady-coral.md)
 # All 7 Adaption models as workers/monitors/coordinators; LFM3 everywhere; LFM2.5 as monitor only.
+# Size (2026-11-08): 6 seeds per cell (was 10), re-routing ablation 10 seeds (was 20), 8 batches in parallel.
 # No-oversight baseline: oversight none / silent / announced (agents are TOLD; the researcher record is always kept).
 name: run2
-max_parallel: 4
+max_parallel: 8          # 2026-11-08: 4 -> 8 (about half the wall time)
 local_slots: 2          # each local llama-server has 2 slots
-remote_slots: 4         # concurrent steps per Adaption model (the shared coordinator would otherwise cap batches at 2)
+remote_slots: 8         # concurrent steps per Adaption model: every batch shares the coordinator, so this caps batches too
 credit_ceiling: 300
-defaults: {coordinator: gemma-4-31b-it, cond: AB, workers: 4, oversight: silent, seeds: "0-9", intent_model: "local:lfm3-1.7b"}
+defaults: {coordinator: gemma-4-31b-it, cond: AB, workers: 4, oversight: silent, seeds: "0-5", intent_model: "local:lfm3-1.7b"}
 
 groups:
   # ------------------------------------------------------------------ tier 1: core ----
@@ -32,14 +33,14 @@ groups:
     results: [t1]
     monitors: [qwen3.5-397b, "local:lfm3-1.7b"]
     views: [naive, chain, chain_audit, naive_scripted, chain_audit_scripted]
-    estimate_episodes: 480
+    estimate_episodes: 288
   - id: t1_deception
     tier: 1
     type: deception
     after: [t1_workers, t1_oversight]
     results: [t1]
     checker: qwen3.5-397b
-    estimate_episodes: 480
+    estimate_episodes: 288
   - id: t1_analyze
     tier: 1
     type: analyze
@@ -51,7 +52,7 @@ groups:
     tier: 2
     type: batch
     results: t2_reroute
-    seeds: "0-19"
+    seeds: "0-9"
     matrix:
       worker: ["local:lfm3-1.7b", qwen3.8-27b]
       mode: [attack]
@@ -79,14 +80,14 @@ groups:
     results: [t2_reroute, t2_coord, t2_forging]
     monitors: [qwen3.5-397b, "local:lfm3-1.7b"]
     views: [naive, chain, chain_audit, naive_scripted, chain_audit_scripted]
-    estimate_episodes: 70
+    estimate_episodes: 45
   - id: t2_deception
     tier: 2
     type: deception
     after: [t2_reroute, t2_coord, t2_forging]
     results: [t2_reroute, t2_coord, t2_forging]
     checker: qwen3.5-397b
-    estimate_episodes: 70
+    estimate_episodes: 45
   - id: t2_analyze
     tier: 2
     type: analyze
@@ -103,7 +104,7 @@ groups:
     monitors: [gemma-4-31b-it, glm-5.2, qwen3.5-397b, gemma-4-26b-a4b-it, qwen3.8-27b, deepseek-v4-flash, glm-53-flash, "local:lfm3-1.7b", "local:lfm2.5-8b"]
     views: [naive, chain, chain_audit, naive_scripted, chain_audit_scripted]
     scores_file: monitor_scores_sweep.jsonl
-    estimate_episodes: 90
+    estimate_episodes: 54
   - id: t3_coverup_visible        # RQ1b: visible vs stealthy (stealthy = primary scores)
     tier: 3
     type: score
@@ -114,7 +115,7 @@ groups:
     monitors: [qwen3.5-397b, "local:lfm3-1.7b"]
     views: [naive_scripted, chain_audit_scripted, chain]
     scores_file: monitor_scores_coverup_visible.jsonl
-    estimate_episodes: 90
+    estimate_episodes: 54
   - id: t3_keepauth               # the matched tidy-up confound (keep_auth=0 = primary scores)
     tier: 3
     type: score
@@ -125,7 +126,7 @@ groups:
     monitors: [qwen3.5-397b, "local:lfm3-1.7b"]
     views: [naive_scripted, chain_audit_scripted, chain]
     scores_file: monitor_scores_keepauth1.jsonl
-    estimate_episodes: 90
+    estimate_episodes: 54
   - id: t3_tamper_audit
     tier: 3
     type: tamper_audit

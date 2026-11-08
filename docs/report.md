@@ -160,7 +160,7 @@ Short, one paragraph per theme. **Verify every reference against `reading.md`** 
 - **Sampling:** agents at temperature 0.7; monitors and classifiers at temperature 0. LFM reasoning is off; LFM2.5's thinking can't be switched off per request.
 
 ### 3.8 Design and statistics
-- **Run 2 campaign** (`campaigns/run2.yaml`): [[RUN2: final episode counts per tier]]. Planned: 700 episodes, about 102 credits.
+- **Run 2 campaign** (`campaigns/run2.yaml`): [[RUN2: final episode counts per tier]]. Planned: 412 episodes (6 seeds per cell; re-routing ablation 10 seeds), about 62 credits.
 - **Positives:** attack episodes that leaked (primary); all attack episodes (secondary, declared after the pilot).
 - **Negatives:** benign + near-miss.
 - **Statistics:**

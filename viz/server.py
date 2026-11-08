@@ -85,34 +85,56 @@ def run_of(rel_path: str) -> str:
 
 
 def list_episodes() -> list[dict]:
+    """Live episodes only: a feed exists while its episode runs and until its records are uploaded to the
+    dataset (env/store.py), then it is deleted. Finished episodes are in the dataset, not shown here."""
     seen, out = set(), []
-    for p in episode_files():
-        for e in _jsonl(p):
-            rid = e["run_id"]
-            if rid in seen:  # duplicate run_id: keep the latest record only
-                out = [o for o in out if o["run_id"] != rid]
-            seen.add(rid)
-            out.append({"run_id": rid, "file": os.path.relpath(p, ROOT), "run": run_of(os.path.relpath(p, ROOT)),
-                        "oversight": e.get("oversight", "silent"),
-                        "mode": e["mode"] + ("-nr" if e.get("no_reroute") else ""),
-                        "cond": e["cond"], "seed": e["seed"], "worker": e["models"]["worker"],
-                        "coordinator": e["models"]["coordinator"], "leaked": e["leaked"], "tampered": e["tampered"],
-                        "n_records": e.get("n_records"), "status": "done",
-                        "live": os.path.exists(os.path.join(LIVE, f"{rid}.jsonl"))})
     for lf in glob.glob(os.path.join(LIVE, "*.jsonl")):
         rid = os.path.basename(lf)[:-6]
         if rid in seen:
             continue
-        evs = _jsonl(lf)
-        st = next((e for e in evs if e["type"] == "episode_start"), {})
+        st, n_rec, ended = _live_summary(lf)
         res = st.get("results_dir")
         out.append({"run_id": rid, "file": (res + "/episodes.jsonl") if res else "logs/live",
                     "run": run_of(res) if res else "live (unassigned)", "oversight": st.get("oversight", "silent"),
                     "mode": st.get("mode", "?"), "cond": st.get("cond", "?"),
                     "seed": st.get("seed"), "worker": (st.get("models") or {}).get("worker", "?"),
                     "coordinator": (st.get("models") or {}).get("coordinator", "?"), "leaked": None, "tampered": None,
-                    "n_records": sum(1 for e in evs if e["type"] == "record"),
-                    "status": "done" if any(e["type"] == "episode_end" for e in evs) else "running", "live": True})
+                    "n_records": n_rec,
+                    "status": "done" if ended else "running", "live": True})
+    return out
+
+
+_LIVE_CACHE: dict[str, tuple] = {}
+
+
+def _live_summary(path: str) -> tuple[dict, int | None, bool]:
+    """(episode_start, n_records, ended) without parsing the whole file: live feeds can be GBs
+    (log_read results nest inside the log). Cached by (size, mtime)."""
+    try:
+        s = os.stat(path)
+    except OSError:
+        return {}, None, False
+    key = (s.st_size, s.st_mtime)
+    hit = _LIVE_CACHE.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    st, ended = {}, False
+    with open(path, "rb") as f:
+        first = f.readline(1 << 20)
+        try:
+            ev = json.loads(first)
+            if ev.get("type") == "episode_start":
+                st = ev
+        except ValueError:
+            pass
+        f.seek(max(0, s.st_size - 65536))  # episode_end is the last line; its edited/deleted lists can be long
+        ended = b'"type": "episode_end"' in f.read()
+    n_rec = None
+    if s.st_size < 50 << 20:  # count records only for normal-sized feeds
+        with open(path, "rb") as f:
+            n_rec = sum(1 for line in f if line.startswith(b'{"type": "record"'))
+    out = (st, n_rec, ended)
+    _LIVE_CACHE[path] = (key, out)
     return out
 
 
@@ -253,9 +275,12 @@ class Handler(SimpleHTTPRequestHandler):
         ann, pos, last_beat, ended = None, 0, time.time(), False
         idle_since = time.time()
         while True:
-            with open(path, "rb") as f:  # byte offsets: safe with non-ASCII agent text
-                f.seek(pos)
-                chunk = f.read()
+            try:
+                with open(path, "rb") as f:  # byte offsets: safe with non-ASCII agent text
+                    f.seek(pos)
+                    chunk = f.read()
+            except FileNotFoundError:
+                return  # offloaded to the dataset and deleted: the episode is over
             complete, sep, _ = chunk.rpartition(b"\n")  # only whole lines; a partial last line waits
             if sep:
                 pos += len(complete) + 1
@@ -277,10 +302,20 @@ class Handler(SimpleHTTPRequestHandler):
             time.sleep(0.25)
 
 
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        # a browser that reloads/closes mid-response is normal; don't print a traceback for it
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
+
+
 def main():
     host = os.environ.get("VIZ_HOST", "127.0.0.1")
     port = int(os.environ.get("VIZ_PORT", "8765"))
-    srv = ThreadingHTTPServer((host, port), Handler)
+    srv = Server((host, port), Handler)
     print(f"swarm viz: http://{host}:{port}   (Ctrl-C to stop)", flush=True)
     try:
         srv.serve_forever()

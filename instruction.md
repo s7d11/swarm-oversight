@@ -225,6 +225,12 @@ scripts/run2.sh                             # first time: build, verify, smoke-t
 ./swarm.sh campaign resume                  # after a crash, kill or reboot; continues where it stopped
 ```
 
+**Records go to Hugging Face as the run goes** (`SWARM_OFFLOAD=hf`, the default in `swarm.conf`; private dataset `SWARM_HF_REPO`, token `HF_KEY` in `.env`). The README section "Records and PDF reports" has the details. In short:
+- After each episode, its records are packed (lossless `.tar.xz`), uploaded, checked on the Hub and deleted. Only then does the next episode start.
+- Sealed sessions follow after each batch, and the run folder when the campaign finishes. Afterwards only `runs/swarmKV<N>/OFFLOADED.md` is left.
+- A failed upload keeps the files on disk. Retry it with `.venv/bin/python tools/offload.py runs/swarmKV<N>` (safe during a run), or `... --finalize` after the run.
+- Set `SWARM_OFFLOAD=off` to keep everything locally instead.
+
 How it survives interruptions:
 - **State:** `state.json` is written atomically after every change.
 - **Batches:** they resume per seed (`run.py --resume`); episodes already finished without error are skipped, and errored ones are rerun.

@@ -19,6 +19,7 @@ Q2 tamper resistance: can an attacker change the evidence WITHOUT a verification
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import glob
 import inspect
@@ -32,7 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import kv  # noqa: E402
-from env import sandbox as sandbox_mod  # noqa: E402
+from env import sandbox as sandbox_mod, store  # noqa: E402
 from env.gateway import Gateway, genesis_for  # noqa: E402
 from env.sandbox import Sandbox, make_canary  # noqa: E402
 from verify_chain import DuplicateKeyError, loads_strict, reconcile, reconcile_records, sealed_head, verify_chain  # noqa: E402
@@ -281,6 +282,30 @@ def kv_duplicate_key_behaviour() -> str:
         return f"rejected ({e})"
 
 
+def audit_real(ep: dict, ef: str, sdir: str | None) -> dict | None:
+    """Completeness + verification of one recorded episode (its files on disk)."""
+    p = ep.get("paths", {})
+    if p.get("copy") and os.path.exists(p["copy"]) and not p.get("chain"):
+        # no-oversight condition: plain researcher copy, completeness checks only (nothing to verify)
+        chain = [{"rec": r} for r in _jsonl(p["copy"])]
+        return {"run_id": ep["run_id"], "file": os.path.relpath(ef, ROOT), "legacy_genesis": False,
+                "integrity": "plain", "chain_ok": None, "chain_ok_vs_sealed_head": None,
+                "reconcile": reconcile_records(_jsonl(p["shared_log"]), [e["rec"] for e in chain]),
+                **completeness(chain, ep["seed"], ep.get("final_notes"), ep.get("egress"))}
+    if not p.get("chain") or not os.path.exists(p["chain"]):
+        return None
+    chain = _jsonl(p["chain"])
+    legacy = "genesis" not in ep
+    g = kv.GENESIS if legacy else genesis_for(ep["run_id"])
+    v = verify_chain(chain, open(p["head"]).read().strip(), g)
+    anchor = sealed_head(sdir, ep["run_id"]) if sdir else None
+    va = verify_chain(chain, anchor, g)["ok"] if anchor else None
+    return {"run_id": ep["run_id"], "file": os.path.relpath(ef, ROOT), "legacy_genesis": legacy,
+            "integrity": "kv", "chain_ok": v["ok"], "chain_ok_vs_sealed_head": va,
+            "reconcile": reconcile(_jsonl(p["shared_log"]), chain) if v["ok"] else None,
+            **completeness(chain, ep["seed"], ep.get("final_notes"), ep.get("egress"))}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--episodes", nargs="*", default=None, help="episodes.jsonl files (default: all under logs/)")
@@ -307,29 +332,19 @@ def main():
                          + glob.glob(os.path.join(ROOT, "runs", "**", "episodes.jsonl"), recursive=True))
     real = []
     for ef in files:
+        by_batch: dict[tuple, list] = {}
         for ep in _jsonl(ef):
-            p = ep.get("paths", {})
-            if p.get("copy") and os.path.exists(p["copy"]) and not p.get("chain"):
-                # no-oversight condition: plain researcher copy, completeness checks only (nothing to verify)
-                chain = [{"rec": r} for r in _jsonl(p["copy"])]
-                real.append({"run_id": ep["run_id"], "file": os.path.relpath(ef, ROOT), "legacy_genesis": False,
-                             "integrity": "plain", "chain_ok": None, "chain_ok_vs_sealed_head": None,
-                             "reconcile": reconcile_records(_jsonl(p["shared_log"]), [e["rec"] for e in chain]),
-                             **completeness(chain, ep["seed"], ep.get("final_notes"), ep.get("egress"))})
-                continue
-            if not p.get("chain") or not os.path.exists(p["chain"]):
-                continue
-            chain = _jsonl(p["chain"])
-            legacy = "genesis" not in ep
-            g = kv.GENESIS if legacy else genesis_for(ep["run_id"])
-            v = verify_chain(chain, open(p["head"]).read().strip(), g)
-            sdir = os.path.join(ep.get("sealed_dir") or os.path.join(ROOT, "sealed"), ep.get("batch", ""))
-            anchor = sealed_head(sdir, ep["run_id"]) if ep.get("batch") and os.path.isdir(sdir) else None
-            va = verify_chain(chain, anchor, g)["ok"] if anchor else None
-            real.append({"run_id": ep["run_id"], "file": os.path.relpath(ef, ROOT), "legacy_genesis": legacy,
-                         "integrity": "kv", "chain_ok": v["ok"], "chain_ok_vs_sealed_head": va, "reconcile": reconcile(_jsonl(p["shared_log"]), chain) if v["ok"] else None,
-                         **completeness(chain, ep["seed"], ep.get("final_notes"), ep.get("egress"))})
+            by_batch.setdefault((ep.get("sealed_dir") or os.path.join(ROOT, "sealed"), ep.get("batch") or ""), []).append(ep)
+        for (sealed_dir, batch), eps in by_batch.items():
+            # the batch's K-Veritas session once (on disk, or fetched), then its episodes' records one by one
+            with (store.local_sealed(sealed_dir, batch) if batch else contextlib.nullcontext(None)) as sdir:
+                for ep in eps:
+                    with store.local(ep) as lep:  # records on disk, or fetched from the dataset for this block
+                        r = audit_real(lep, ef, sdir)
+                    if r:
+                        real.append(r)
     report["real_episodes"] = real
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)  # logs/ may not exist (records are offloaded)
     with open(a.out, "w") as f:
         json.dump(report, f, indent=2)
 

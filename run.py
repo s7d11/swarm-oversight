@@ -19,7 +19,7 @@ import time
 import traceback
 
 import kv
-from env import agents, intent as intent_mod, kvrecord, live
+from env import agents, intent as intent_mod, kvrecord, live, store
 from env.coordinator import run_star
 from env.gateway import Gateway
 from env.sandbox import Sandbox
@@ -137,6 +137,17 @@ def episode(mode: str, cond: str, seed: int, n_workers: int, models: dict, tag: 
     return ep
 
 
+def retry_pending(eps: list[dict]) -> None:
+    """Episodes whose upload failed are still on disk: try once more (their files are deleted only on success).
+    Their episodes.jsonl line keeps "pending"; readers find the records on disk or in the dataset either way."""
+    for ep in eps:
+        if (ep.get("archive") or {}).get("pending"):
+            r = store.offload_episode(ep, extra={"transcript": ep["paths"].get("transcript")},
+                                      live_feed=os.path.join(live.LIVE_DIR, f"{ep['run_id']}.jsonl"))
+            print(f"  retry offload {ep['run_id']}: {'still pending (tools/offload.py later)' if r.get('pending') else 'done'}",
+                  flush=True)
+
+
 def main():
     _load_dotenv()
     ap = argparse.ArgumentParser()
@@ -195,6 +206,9 @@ def main():
     intent = intent_mod.from_env(a.intent_model)
     if intent:
         print(f"intent classifier: {intent.model} (flag only; researcher-only records)", flush=True)
+    if store.enabled():
+        store.ensure_repo()  # fail now (token, repo) rather than after the first episode
+        print(f"offload: each episode is uploaded to {store.repo_id()} and deleted locally before the next one", flush=True)
     out = []
     for seed in seeds:
         ep = episode(a.mode, a.cond, seed, a.workers, models, tag=batch.rsplit("_", 1)[-1],
@@ -202,27 +216,44 @@ def main():
                      sess=sess, intent=intent)
         ep["sealed_dir"] = sealed_dir if integrity == "kv" else None
         out.append(ep)
+        pdf = None
+        if sess is not None and not a.no_transcripts:
+            chain = [json.loads(line) for line in open(ep["paths"]["chain"])]
+            pdf = os.path.join(out_dir, "transcripts", f"{ep['run_id']}.transcript.pdf")
+            kvrecord.write_transcript(pdf, ep, chain, os.path.join(sealed_dir, batch))
+            ep["paths"]["transcript"] = pdf
+        if store.enabled():
+            # upload -> check on the Hub -> delete locally, BEFORE the episode is marked done and the next one starts
+            feed = os.path.join(live.LIVE_DIR, f"{ep['run_id']}.jsonl") if live.enabled() else None
+            ep["archive"] = store.offload_episode(ep, extra={"transcript": pdf} if pdf else None, live_feed=feed)
         _fsync_append(results, json.dumps(ep))
+        arch = ep.get("archive") or {}
         print(f"[{ep['run_id']}] leaked={ep['leaked']} refusals={ep['refusals']} said_no_did_it={ep.get('said_no_did_it')} "
               f"harmful_deleg={ep.get('harmful_delegations')} reroutes={ep['reroutes']} blocked={ep.get('blocked_by_no_reroute')} "
               f"tampered={ep['tampered']} edited={len(ep['edited'])} deleted={len(ep['deleted'])} forged={ep['forged']} "
               f"records={ep['n_records']} err={ep['error']}", flush=True)
-        if sess is None:
-            continue
-        chain = [json.loads(line) for line in open(ep["paths"]["chain"])]
-        if not a.no_transcripts:
-            pdf = os.path.join(out_dir, "transcripts", f"{ep['run_id']}.transcript.pdf")
-            kvrecord.write_transcript(pdf, ep, chain, os.path.join(sealed_dir, batch))
+        if arch.get("pending"):
+            print(f"  offload PENDING (kept on disk, retried at the end of the batch): {arch['error']}", flush=True)
+        elif arch:
+            print(f"  offloaded -> {arch['path']} ({arch['raw_bytes']:,} -> {arch['bytes']:,} bytes)", flush=True)
+        elif pdf:
             print(f"  transcript -> {os.path.relpath(pdf, ROOT)}", flush=True)
+    retry_pending(out)
     n = len(out)
     u = agents.USAGE
+    # errored episodes (e.g. an API timeout) are kept in the results but make the batch exit non-zero, so a
+    # campaign retries the step and --resume reruns only those seeds; otherwise the step would be marked done with holes
+    errored = [e["seed"] for e in out if e.get("error") is not None]
+    rc = 3 if errored else 0
+    if errored:
+        print(f"ERRORED seeds {errored}: exit {rc} (rerun with --resume)", flush=True)
     print("USAGE_JSON " + json.dumps({m: {"calls": mu.calls, "input_tokens": mu.input_tokens, "output_tokens": mu.output_tokens}
                                       for m, mu in agents.USAGE_BY_MODEL.items()}), flush=True)
     if sess is None:
         print(f"usage: calls={u.calls} in={u.input_tokens} out={u.output_tokens}")
         for m, mu in agents.USAGE_BY_MODEL.items():
             print(f"  {m}: calls={mu.calls} in={mu.input_tokens} out={mu.output_tokens} latency={mu.latency_s:.1f}s")
-        return
+        return rc
     # batch summary run: claims + usage (claims attach to the active run)
     sess.run_begin(f"batch-summary {batch}"[:90])
     sess.claim("leak_rate", sum(e["leaked"] for e in out) / n, "episodes")
@@ -242,10 +273,14 @@ def main():
     else:
         print("not sealed: no key (create one with scripts/run2.sh stage 1, or pass --seal-key)", flush=True)
     sess.close()
+    if key and store.enabled():
+        r = store.offload_sealed(sealed_dir, batch)
+        print(f"  K-Veritas session offloaded: {r.get('files') or r}", flush=True)
     print(f"usage: calls={u.calls} in={u.input_tokens} out={u.output_tokens}")
     for m, mu in agents.USAGE_BY_MODEL.items():
         print(f"  {m}: calls={mu.calls} in={mu.input_tokens} out={mu.output_tokens} latency={mu.latency_s:.1f}s")
+    return rc
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)

@@ -155,7 +155,7 @@ EOF
 cmd_setup() {
   info "python venv"
   [[ -x "$PY" ]] || run_cmd python3 -m venv "$ROOT/.venv"
-  run_cmd "$PY" -m pip install -q "adaption>=0.16.0" numpy scikit-learn matplotlib pyyaml pytest
+  run_cmd "$PY" -m pip install -q "adaption>=0.16.0" numpy scikit-learn matplotlib pyyaml pytest "huggingface_hub>=1.0" hf_xet
   info "build lib/libkveritas.so from ${KVERITAS_C_DIR:=$HOME/kv/kveritas-c}"
   [[ -d "$KVERITAS_C_DIR" ]] || die "K-Veritas C source not found at $KVERITAS_C_DIR (set KVERITAS_C_DIR)"
   mkdir -p "$ROOT/lib"
@@ -180,6 +180,11 @@ cmd_doctor() {
   [[ -f "$LFM_MODEL_PATH" ]] && ok "LFM model: $LFM_MODEL_PATH" || warn "LFM model not found: $LFM_MODEL_PATH"
   [[ -x "$GO_BIN/go" ]] && ok "go: $("$GO_BIN/go" version)" || warn "Go toolchain not at $GO_BIN (only needed for interop debugging)"
   command -v "$KVERITAS_BIN" >/dev/null && ok "kveritas: $("$KVERITAS_BIN" version 2>&1 | head -1)" || warn "kveritas CLI not found"
+  if [[ "${SWARM_OFFLOAD:-}" == hf ]]; then
+    local who
+    if who="$("$PY" -c "from env import store; store.ensure_repo(); i=store.api().dataset_info(store.repo_id()); print(store.api().whoami()['name'], 'private' if i.private else 'PUBLIC')" 2>&1 | tail -1)" \
+       && [[ "$who" == *private ]]; then ok "offload: $SWARM_HF_REPO ($who)"; else warn "offload: $SWARM_HF_REPO not usable: $who"; bad=1; fi
+  fi
   command -v nvidia-smi >/dev/null && ok "GPU: $(nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader)"
   echo "models: worker=$WORKER_MODEL coord=$COORD_MODEL monitors=[$MONITOR_MODELS]"
   return $bad

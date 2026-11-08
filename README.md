@@ -12,7 +12,7 @@ Built for the Apart Research Swarm Alignment Hackathon (Tracks 4 and 2), Novembe
 
 ---
 
-![./assets/swarm_oversight.png](./assets/swarm_oversight.png)
+![./assets/swarm_oversight.png](./assets/swarms.gif)
 
 ---
 
@@ -68,11 +68,11 @@ Options:
 
 Everything is logged to `runs/prep_<ts>.log`. **Nothing is committed** in the K-Veritas repos; review and commit the fixes yourself (`docs/KVERITAS_INTEROP_BUGS.md`).
 
-### Run 2 contents (`campaigns/run2.yaml`: 84 steps, 700 episodes, about 102 credits estimated, ceiling 300)
+### Run 2 contents (`campaigns/run2.yaml`: 84 steps, 412 episodes, about 62 credits estimated, ceiling 300; 8 batches in parallel)
 
 | Tier | What |
 | --- | --- |
-| 1 | **Worker sweep:** all 7 Adaption models + LFM3 × single, attack, benign, near-miss × 10 seeds. **Oversight conditions** `none` and `announced` for 4 workers. Scoring with Qwen 3.5 397B + LFM3. Deception checks. Analysis |
+| 1 | **Worker sweep:** all 7 Adaption models + LFM3 × single, attack, benign, near-miss × 6 seeds. **Oversight conditions** `none` and `announced` for 4 workers. Scoring with Qwen 3.5 397B + LFM3. Deception checks. Analysis |
 | 2 | Re-routing ablation, coordinator sweep, forging (condition C), each with scoring, deception checks and analysis |
 | 3 | 9-monitor sweep, visible vs stealthy cover-up, tidy-up confound, tamper audit, **sealing of every K-Veritas session**, analyses |
 
@@ -98,22 +98,29 @@ To resume automatically after a reboot, use `deploy/systemd/swarm-campaign@.serv
 
 ## Records and PDF reports
 
-Each campaign writes only to its own folder, `runs/swarmKV<N>/`. Past runs are never touched (`runs/INDEX.md`).
+**Nothing is kept on this machine.** With `SWARM_OFFLOAD=hf` (the default in `swarm.conf`), the records go to the **private** Hugging Face dataset `s7d11/swarm-kveritas-logs` (token: `HF_KEY` in `.env`; `./swarm.sh doctor` checks access and that the dataset is private). `env/store.py` does it in four steps:
 
-```
-runs/swarmKV<N>/
-  spec.yaml  state.json  campaign.log  config_snapshot/   # frozen spec, progress, config + env at start
-  t1/ t2_*/                                               # one folder per results group
-    episodes.jsonl                                        # one line per episode (outcome, refusals, deception, paths)
-    <run_id>.chain.jsonl  .head  .genesis                 # K-Veritas gateway chain (every exchange, hash-linked)
-    <run_id>.shared.jsonl                                 # the agents' own (editable) log as they left it
-    <run_id>.copy.jsonl                                   # no-oversight condition: plain record, no K-Veritas
-    transcripts/<run_id>.transcript.pdf                   # K-Veritas PDF: every exchange, readable, anchors embedded
-    monitor_scores*.jsonl  deception.jsonl  analysis*.md
-  sealed/<batch>/                                         # K-Veritas session: one run per episode
-  sealed/<batch>.pdf                                      # SIGNED batch report (RSA-PSS)
-  tamper_audit.json
-```
+1. **After each episode:**
+   - its record files (shared log, K-Veritas chain + head + genesis, or the plain copy) are packed into one lossless `<run_id>.tar.xz`
+   - the archive and the transcript PDF are uploaded in one commit
+   - each file is checked on the Hub (size and sha256)
+   - the local files and the live feed are deleted
+   - only then is the episode marked done in `episodes.jsonl`, and the next episode starts
+2. **After each batch seal:** the K-Veritas session (`<batch>.tar.xz`) and the signed `<batch>.pdf` are handled the same way.
+3. **When the campaign finishes:** `tools/offload.py --finalize` uploads the rest of the run folder (state, logs, scores, analyses, tamper audit, orphan feeds). It then leaves only `runs/swarmKV<N>/OFFLOADED.md`, which keeps the run number taken.
+4. **If an upload fails:** after the retries, the files **stay on disk** and are retried at the end of the batch, or later with `tools/offload.py runs/swarmKV<N>`. Nothing is deleted before the Hub confirms it.
+
+**How small the records get, with no loss of fidelity:**
+- `log_read` no longer nests earlier `log_read` outputs: that self-nesting was the cause of the GB-sized episodes.
+- The live feed is deleted: it only duplicates the chain.
+- xz removes the shared-log/chain duplication and compresses the JSON. A synthetic 742 KB episode packs to 8 KB, and it comes back byte-identical with the chain still verifying.
+
+**Reading the records:**
+- Scoring, deception checks, the intent classifier, the tamper audit and `check_campaign` fetch each episode into a temporary folder and delete it afterwards (`with store.local(ep)`). Nothing goes into the HF cache.
+- The visualizer shows **live** episodes only.
+- To fetch a whole run: `.venv/bin/hf download s7d11/swarm-kveritas-logs --repo-type dataset --include "runs/swarmKV1/*" --local-dir /tmp/swarmKV1`.
+
+Layout in the dataset (the same paths the run used locally):
 
 **How each exchange is recorded in K-Veritas:**
 1. **In the gateway chain:** every message, tool call and tool result is hashed into the K-Veritas chain the moment it happens (`kv_chain_advance`). The genesis is bound to the run ID.
@@ -141,8 +148,10 @@ Its verdicts are researcher-only records:
 ### Verifying records
 
 ```sh
+# fetch what you want to check first (records are not on disk), e.g. a run's sealed reports:
+.venv/bin/hf download s7d11/swarm-kveritas-logs --repo-type dataset --include "runs/swarmKV<N>/sealed/*" --local-dir /tmp/kv
 # signed batch report (fixed verifier, against the project key)
-bin/kveritas-dev verify runs/swarmKV<N>/sealed/<batch>.pdf --offline --public-key keys/seal-public.pem
+bin/kveritas-dev verify /tmp/kv/runs/swarmKV<N>/sealed/<batch>.pdf --offline --public-key keys/seal-public.pem
 # an episode's chain against the head sealed in K-Veritas (catches a rewritten chain + .head)
 .venv/bin/python verify_chain.py runs/swarmKV<N>/t1/<run_id> --sealed runs/swarmKV<N>/sealed/<batch>
 ./swarm.sh tamper-audit --episodes runs/swarmKV<N>/t1/episodes.jsonl   # completeness + tamper battery

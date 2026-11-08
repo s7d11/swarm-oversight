@@ -16,6 +16,7 @@ import json
 import os
 
 import run as R
+from env import store
 from env.intent import IntentClassifier, summarize
 from verify_chain import researcher_records
 
@@ -52,7 +53,8 @@ def main():
     for ep in _jsonl(a.episodes):
         if ep.get("error") or ep.get("intent"):  # live-classified episodes already carry their records
             continue
-        dels = delegations(researcher_records(ep.get("paths", {})))
+        with store.local(ep) as lep:  # records on disk, or fetched from the dataset for this block
+            dels = delegations(researcher_records(lep.get("paths", {})))
         if not dels:
             continue
         n_eps += 1

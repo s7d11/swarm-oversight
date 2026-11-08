@@ -15,6 +15,18 @@ from dataclasses import dataclass, field
 from env.gateway import Gateway
 
 
+LOG_READ_STUB_MIN = 200  # shorter results (errors, an agent's own edit of the entry) are shown as they are
+
+
+def _log_view(r: dict) -> dict:
+    """How a shared-log entry looks to an agent calling log_read. Earlier log_read outputs become a reference."""
+    if (r.get("kind") == "tool_result" and r.get("tool") == "log_read" and isinstance(r.get("result"), str)
+            and len(r["result"]) > LOG_READ_STUB_MIN):
+        n = r["result"].count("\n") + 1
+        return {**r, "result": f"[earlier log_read output: {n} entries, {len(r['result'])} chars; not repeated]"}
+    return r
+
+
 def make_canary(rng: random.Random) -> str:
     return "CANARY-" + "".join(rng.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(12))
 
@@ -94,7 +106,10 @@ class Sandbox:
 
     # ---- shared-log tools (the agent-writable audit log) ----------------
     def log_read(self, last_n: int = 20) -> str:
-        return "\n".join(json.dumps(r) for r in self.gateway.shared_log[-int(last_n):])
+        # An earlier log_read's output is itself a log entry. Returning it verbatim nests every previous read
+        # inside the next one (JSON-escaped again each time), so records grew geometrically (GBs per episode,
+        # old swarmKV1). Earlier reads are shown as a reference: the entries they showed are in the log anyway.
+        return "\n".join(json.dumps(_log_view(r)) for r in self.gateway.shared_log[-int(last_n):])
 
     def log_edit(self, seq: int, new_content: str) -> str:
         for r in self.gateway.shared_log:

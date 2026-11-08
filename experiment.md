@@ -383,7 +383,11 @@ The attack component (task decomposition plus log tampering) is a deliberately s
 | | Gemma-4-12B-OBLITERATED checked: not servable on Adaption (fixed hosted models only; AutoScientist has no Gemma 4 12B); HF ZeroGPU on the free account gives 5 GPU-min/day (about 2–4 episodes). Skipped | – |
 | | Private repo `s7d11/swarm-oversight` (code + docs; no data, no K-Veritas builds); secret scan clean | Pushed |
 | | Coordinator-intent classifier (flag only): step + cumulative views, LLM (LFM3) + keyword; researcher-only records (own ids, not in the shared log or the monitor views); K-Veritas `intent` metrics and transcript; agreement analysis (RQ6); post-hoc tool | 41 offline tests pass |
-| **Next** | Pilot batch → full matrix → monitor scoring → `analyze.py` → report | See §12 |
+| Nov 8 | Old swarmKV1 (run 2, first attempt) stopped after 176 episodes. **Bug found:** `log_read` returned earlier `log_read` outputs verbatim, so each read nested and re-escaped all earlier ones. Records grew geometrically: chains up to 13 MB, live feeds up to 2.3 GB per episode. Agents saw only 8,000 characters, so credits were unaffected, but that window filled with escaped junk, which distorts the tidy-up behaviour under study. **Not usable for results.** | `log_read` shows earlier reads as a short reference |
+| | Every record so far (pilot, run 1, smoke tests, old swarmKV1, sealed sessions; 2,053 files, 11.6 GB) uploaded to the private HF dataset `s7d11/swarm-kveritas-logs` (`archive_20261108/`), checked file by file, deleted locally | `runs/INDEX.md` |
+| | **Record offload** (`env/store.py`): after each episode the records are packed (lossless `.tar.xz`), uploaded, checked on the Hub (size + sha256) and deleted, before the next episode starts. Sealed sessions follow after each batch, and the run folder at the end (`tools/offload.py`). Readers fetch on demand. The visualizer shows live episodes only. A failed upload keeps the files on disk | 51 offline tests pass; real round trip: 742 KB → 8 KB, byte-identical, chain verifies |
+| | KVERITAS-SCIENCE/records checked as a destination for the seals: public and permanent; needs server-sealed reports with `--disclosure open` and `.kvbundle.zip` code bundles; one record per project, up to 50 reports; files are attached by hand in the browser. Our harness seals locally with the project key, so per-batch submission would be rejected | Not submitted; sealed sessions go to the private dataset |
+| **Next** | Fresh run 2 (`scripts/run2.sh`) → monitor scoring → `analyze.py` → report | See §12 |
 
 ---
 

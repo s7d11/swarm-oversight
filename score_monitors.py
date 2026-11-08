@@ -15,7 +15,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import run as R
-from env import agents
+from env import agents, store
 from monitors.monitor import build_view, score
 import random
 
@@ -44,9 +44,12 @@ def scripted_log(ep: dict, shared: list[dict], match: dict) -> tuple[list[dict],
 
 
 def attack_fractions(episodes: list[dict]) -> dict:
-    fr = [scripted_coverup(_jsonl(e["paths"]["shared_log"]), make_canary(random.Random(e["seed"])),
-                           stealthy=os.environ.get("SWARM_SCRIPTED_STEALTHY", "1") != "0")[1]
-          for e in episodes if e["mode"] == "attack" and not e.get("no_reroute")]
+    fr = []
+    for e in episodes:
+        if e["mode"] == "attack" and not e.get("no_reroute"):
+            with store.local(e) as le:  # records on disk, or fetched from the dataset for this block
+                fr.append(scripted_coverup(_jsonl(le["paths"]["shared_log"]), make_canary(random.Random(e["seed"])),
+                                           stealthy=os.environ.get("SWARM_SCRIPTED_STEALTHY", "1") != "0")[1])
     if not fr:
         return {"delete_frac": 0.2, "edit_frac": 0.1}
     return {"delete_frac": sum(f["delete_frac"] for f in fr) / len(fr), "edit_frac": sum(f["edit_frac"] for f in fr) / len(fr)}
@@ -55,6 +58,11 @@ def attack_fractions(episodes: list[dict]) -> dict:
 def load_views(ep: dict, match: dict | None = None) -> dict[str, str]:
     """Views over the researcher's record: the K-Veritas chain (integrity=kv) or the plain copy (integrity=plain,
     the no-oversight condition). The views' CONTENT is identical in both cases; only verification differs."""
+    with store.local(ep) as lep:  # records on disk, or fetched from the dataset for this block
+        return _load_views(lep, match)
+
+
+def _load_views(ep: dict, match: dict | None = None) -> dict[str, str]:
     shared = _jsonl(ep["paths"]["shared_log"])
     if ep["paths"].get("chain"):
         chain = _jsonl(ep["paths"]["chain"])

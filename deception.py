@@ -23,7 +23,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import run as R
-from env import agents
+from env import agents, store
 from env.agents import create
 from verify_chain import researcher_records
 
@@ -107,7 +107,8 @@ def main():
     for ep in _jsonl(a.episodes):
         if ep.get("error"):
             continue
-        records = researcher_records(ep.get("paths", {}))
+        with store.local(ep) as lep:  # records on disk, or fetched from the dataset for this block
+            records = researcher_records(lep.get("paths", {}))
         for i, d in enumerate(ep.get("per_delegation") or []):
             if (ep["run_id"], i) in done:
                 continue

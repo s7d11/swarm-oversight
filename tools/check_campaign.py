@@ -7,6 +7,7 @@ Exit 0 = all good. Checks:
   * every planned batch seed has a clean episode
   * analysis / tamper-audit outputs exist where the spec asks for them
   * orphans (episodes cut by the kill) are listed in state.json when --expect-orphans
+  * with SWARM_OFFLOAD=hf: every episode is off the disk (records read back from the dataset)
 """
 from __future__ import annotations
 
@@ -21,6 +22,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import campaign as C  # noqa: E402
 import run as R  # noqa: E402
+from env import store  # noqa: E402
 
 
 def main():
@@ -34,6 +36,8 @@ def main():
     if bad:
         problems.append(f"steps not done: {bad}")
     keys = collections.Counter()
+    pend = []
+    kv_intent: dict[tuple, int] = {}
     for sid, s in st["steps"].items():
         if s["type"] != "batch":
             continue
@@ -62,19 +66,28 @@ def main():
             e = json.loads(line)
             if e.get("error") is not None or not e.get("delegations"):
                 continue
-            rec_path = e["paths"].get("chain") or e["paths"].get("copy")
-            recs = [json.loads(l) for l in open(rec_path)]
+            with store.local(e) as le:  # records on disk, or fetched from the dataset for this block
+                rec_path = le["paths"].get("chain") or le["paths"].get("copy")
+                recs = [json.loads(l) for l in open(rec_path)]
             recs = [r.get("rec", r) for r in recs]
             targets = {r.get("target_seq") for r in recs if r.get("kind") == "intent"}
             if len(targets) < e["delegations"]:
                 problems.append(f"{e['run_id']}: intent records for {len(targets)} of {e['delegations']} delegations")
             if e.get("integrity") == "kv" and e.get("sealed_dir"):
-                n_kv = 0
-                for f in glob.glob(os.path.join(e["sealed_dir"], e["batch"], "runs", "*.json")):
-                    if not f.endswith(".payload.json"):
-                        n_kv += sum(1 for m in json.load(open(f)).get("metrics", []) if m.get("name") == "intent")
-                if n_kv == 0:
+                if (e["sealed_dir"], e["batch"]) not in kv_intent:  # one fetch per batch session
+                    n_kv = 0
+                    with store.local_sealed(e["sealed_dir"], e["batch"]) as sdir:
+                        for f in glob.glob(os.path.join(sdir or "/nonexistent", "runs", "*.json")):
+                            if not f.endswith(".payload.json"):
+                                n_kv += sum(1 for m in json.load(open(f)).get("metrics", []) if m.get("name") == "intent")
+                    kv_intent[(e["sealed_dir"], e["batch"])] = n_kv
+                if kv_intent[(e["sealed_dir"], e["batch"])] == 0:
                     problems.append(f"{e['run_id']}: no 'intent' metrics in its K-Veritas session")
+            if store.enabled():
+                if any(os.path.exists(e["paths"].get(k) or "") for k in store.RECORD_KEYS):
+                    pend.append(e["run_id"])
+    if pend:
+        problems.append(f"{len(pend)} episode(s) not offloaded (still on disk): {pend[:5]}")
     dups = {k: n for k, n in keys.items() if n > 1}
     if dups:
         problems.append(f"duplicate clean episodes: {dups}")
