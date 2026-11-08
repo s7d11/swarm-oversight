@@ -1,0 +1,10 @@
+# Direct dependencies. Edit this file, then regenerate requirements.txt:
+#   uv pip compile requirements.in -o requirements.txt --generate-hashes \
+#     --python-version 3.11 --exclude-newer <date ~2 weeks ago> \
+#     --exclude-newer-package adaption=<date after the adaption release you want>
+adaption==0.19.0   # vendor SDK; code targets 0.19.0 (experiment.md)
+numpy
+scikit-learn
+matplotlib
+pyyaml
+pytest

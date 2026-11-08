@@ -155,7 +155,8 @@ EOF
 cmd_setup() {
   info "python venv"
   [[ -x "$PY" ]] || run_cmd python3 -m venv "$ROOT/.venv"
-  run_cmd "$PY" -m pip install -q "adaption>=0.16.0" numpy scikit-learn matplotlib pyyaml pytest "huggingface_hub>=1.0" hf_xet
+  # pinned + hash-locked (supply-chain safety); regenerate per the header of requirements.in
+  run_cmd "$PY" -m pip install -q --require-hashes --only-binary=:all: -r "$ROOT/requirements.txt"
   info "build lib/libkveritas.so from ${KVERITAS_C_DIR:=$HOME/kv/kveritas-c}"
   [[ -d "$KVERITAS_C_DIR" ]] || die "K-Veritas C source not found at $KVERITAS_C_DIR (set KVERITAS_C_DIR)"
   mkdir -p "$ROOT/lib"
