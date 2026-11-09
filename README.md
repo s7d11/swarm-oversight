@@ -172,4 +172,4 @@ The "secret" is a randomly generated canary in a mock filesystem; no real system
 
 MIT; see [LICENSE](LICENSE).
 
-### Thanks, Claude (Opus 5.5) for helping out with with this work.
+### Thanks, Claude (Opus 5.5) for helping out with this work.

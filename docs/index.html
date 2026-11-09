@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Swarm Oversight measures whether tamper-evident records help detect when AI agent teams hide what they did.">
+  <meta name="theme-color" content="#f5f4ef">
+  <title>Swarm Oversight - Records agents cannot rewrite</title>
+  <link rel="stylesheet" href="site.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="wordmark" href="#top" aria-label="Swarm Oversight home">
+      <span class="mark" aria-hidden="true">S</span>
+      <span>Swarm Oversight</span>
+    </a>
+    <nav aria-label="Main navigation">
+      <a href="#approach">Approach</a>
+      <a href="#findings">Findings</a>
+      <a href="#evidence">Evidence</a>
+    </nav>
+    <a class="header-link" href="https://github.com/s7d11/swarm-oversight">View on GitHub <span aria-hidden="true">↗</span></a>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot"></span> A research testbed for AI oversight</p>
+        <h1>Agents can act together.<br><em>They shouldn't rewrite the record.</em></h1>
+        <p class="hero-intro">Swarm Oversight tests whether a tamper-evident record can help monitors see what a team of AI agents really did, even when the agents can edit their own shared log.</p>
+        <div class="hero-actions">
+          <a class="button button-dark" href="#findings">Explore the findings <span aria-hidden="true">↓</span></a>
+          <a class="button button-light" href="poster/poster.pdf">Read the research poster <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="hero-note">Swarm Alignment Hackathon · November 2026</p>
+      </div>
+
+      <div class="system-card" role="img" aria-label="Agent messages pass through a gateway. The gateway writes to a sealed, tamper-evident record, while agents can edit their separate shared log.">
+        <div class="system-topline"><span>THE OVERSIGHT GAP</span><span class="live-pill">RESEARCH MODEL</span></div>
+        <div class="flow">
+          <div class="flow-node agents-node"><span class="node-symbol" aria-hidden="true">A</span><b>Agent team</b><small>messages + tool calls</small></div>
+          <div class="flow-arrow" aria-hidden="true"></div>
+          <div class="flow-node gateway-node"><span class="node-symbol" aria-hidden="true">G</span><b>Gateway</b><small>records every exchange</small></div>
+        </div>
+        <div class="branches">
+          <div class="branch-line" aria-hidden="true"></div>
+          <div class="record-row">
+            <div class="record-card secure-record">
+              <span class="record-icon" aria-hidden="true">01</span>
+              <span><b>K-Veritas chain</b><small>sealed outside agent reach</small></span>
+              <span class="record-state">VERIFIABLE</span>
+            </div>
+            <div class="record-card shared-record">
+              <span class="record-icon" aria-hidden="true">02</span>
+              <span><b>Shared activity log</b><small>visible to agents, editable</small></span>
+              <span class="record-state">CAN CHANGE</span>
+            </div>
+          </div>
+        </div>
+        <div class="system-foot"><span>MONITORS COMPARE THE EVIDENCE</span><span class="foot-rule"></span><span>NOT JUST THE CLAIM</span></div>
+      </div>
+      <div class="hero-orbit orbit-one" aria-hidden="true"></div>
+      <div class="hero-orbit orbit-two" aria-hidden="true"></div>
+    </section>
+
+    <section class="snapshot" aria-label="Study snapshot">
+      <div><span class="snapshot-number">411</span><span class="snapshot-label">episodes analyzed</span></div>
+      <div><span class="snapshot-number">9</span><span class="snapshot-label">monitor models evaluated</span></div>
+      <div><span class="snapshot-number">0</span><span class="snapshot-label">sealed chains failed verification</span></div>
+      <p>Experiments with hosted and local models in a controlled, mock environment.</p>
+    </section>
+
+    <section class="section approach" id="approach">
+      <div class="section-heading">
+        <p class="eyebrow">01 / THE APPROACH</p>
+        <h2>Make the record independent<br>of the agents it observes.</h2>
+        <p>A coordinating agent delegates a prohibited task to workers. The team can write to a shared log, but each message and tool call also passes through a gateway and into a separate hash-linked record.</p>
+      </div>
+      <div class="approach-grid">
+        <article class="approach-card">
+          <span class="card-index">01</span>
+          <h3>Set up a controlled test</h3>
+          <p>Agents work in a mock company workspace with a planted canary. There are no real credentials, systems, or external network destinations.</p>
+        </article>
+        <article class="approach-card">
+          <span class="card-index">02</span>
+          <h3>Record what happens</h3>
+          <p>The gateway captures messages and tool calls in a K-Veritas hash chain that agents cannot access or rewrite. Agents also keep their own shared activity log.</p>
+        </article>
+        <article class="approach-card">
+          <span class="card-index">03</span>
+          <h3>Compare what monitors see</h3>
+          <p>LLM monitors judge episodes using the shared log, a tamper-evident record, or a record with reconciliation evidence. The study also tests task-splitting and oversight cues.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section findings" id="findings">
+      <div class="section-heading findings-heading">
+        <p class="eyebrow">02 / WHAT WE FOUND</p>
+        <h2>A trustworthy record changes<br>what oversight can see.</h2>
+        <p>The headline results point to a clear distinction: independently preserved evidence can expose a cover-up, but it does not guarantee that agents will behave safely.</p>
+      </div>
+      <div class="finding-grid">
+        <article class="finding-card finding-primary">
+          <div class="finding-top"><span>01</span><span>MONITOR DETECTION</span></div>
+          <div class="metric-pair">
+            <div><span class="metric">1.00</span><small>shared log, as left</small></div>
+            <span class="metric-arrow" aria-hidden="true">→</span>
+            <div class="metric-low"><span class="metric">0.78</span><small>after stealthy cover-up</small></div>
+          </div>
+          <p>A scripted cover-up reduced the primary monitor's AUROC for leaked attacks. On the tamper-evident record, AUROC was <strong>1.00</strong>.</p>
+          <span class="finding-tag">AUROC · PRIMARY MONITOR</span>
+        </article>
+        <article class="finding-card">
+          <div class="finding-top"><span>02</span><span>TASK-SPLITTING</span></div>
+          <div class="metric standalone-metric">6<span class="metric-denom"> / 78</span></div>
+          <p>Split attacks leaked in 6 of 78 episodes, compared with 0 of 42 direct requests to hosted models. The observed difference was small and not statistically significant (p = 0.09).</p>
+          <span class="finding-tag">HOSTED MODELS</span>
+        </article>
+        <article class="finding-card">
+          <div class="finding-top"><span>03</span><span>INTENT CLASSIFIER</span></div>
+          <div class="metric-pair compact-pair">
+            <div><span class="metric">0.73</span><small>LLM classifier</small></div>
+            <span class="metric-vs">VS</span>
+            <div><span class="metric">0.75</span><small>keyword baseline</small></div>
+          </div>
+          <p>The live intent classifier did not outperform a simple keyword baseline at recognizing the coordinator's intent.</p>
+          <span class="finding-tag">CUMULATIVE AUROC</span>
+        </article>
+      </div>
+      <p class="caveat"><span class="caveat-mark" aria-hidden="true">!</span><span><strong>Important caveat</strong> Agents rarely covered up attacks on their own. The largest measured detection gap used a scripted worst-case cover-up, not a typical agent behavior.</span></p>
+    </section>
+
+    <section class="section evidence" id="evidence">
+      <div class="section-heading evidence-heading">
+        <p class="eyebrow">03 / THE EVIDENCE</p>
+        <h2>Inspect the results.<br>Reproduce the analysis.</h2>
+        <p>All reported numbers are tied to the published records. Explore the figures here, then follow the source material for the full methods and analysis.</p>
+      </div>
+      <div class="figure-grid">
+        <figure class="figure-card">
+          <img src="figures/fig_monitor_auroc.svg" alt="Monitor AUROC comparison across evidence views. The edited log scores lower than the tamper-evident record for most monitors." loading="lazy">
+          <figcaption><span>FIGURE 01</span><b>Monitoring with different evidence</b><a href="figures/fig_monitor_auroc.svg">Open figure <span aria-hidden="true">↗</span></a></figcaption>
+        </figure>
+        <figure class="figure-card">
+          <img src="figures/fig_splitting.svg" alt="Leak rates comparing direct requests with tasks split across four agents, and re-routing versus no re-routing." loading="lazy">
+          <figcaption><span>FIGURE 02</span><b>Task-splitting and re-routing</b><a href="figures/fig_splitting.svg">Open figure <span aria-hidden="true">↗</span></a></figcaption>
+        </figure>
+      </div>
+      <div class="resource-row">
+        <a class="resource-card" href="poster/poster.pdf"><span class="resource-icon" aria-hidden="true">PDF</span><span><b>Research poster</b><small>One-page summary and figures</small></span><span class="resource-arrow" aria-hidden="true">↗</span></a>
+        <a class="resource-card" href="https://github.com/s7d11/swarm-oversight/blob/main/docs/results_swarmKV1.md"><span class="resource-icon" aria-hidden="true">TXT</span><span><b>Results with sources</b><small>Every reported number and dataset reference</small></span><span class="resource-arrow" aria-hidden="true">↗</span></a>
+        <a class="resource-card" href="https://huggingface.co/datasets/s7d11/swarm-kveritas-logs"><span class="resource-icon" aria-hidden="true">DATA</span><span><b>Published records</b><small>Episode records and signed reports</small></span><span class="resource-arrow" aria-hidden="true">↗</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <a class="wordmark footer-wordmark" href="#top"><span class="mark" aria-hidden="true">S</span><span>Swarm Oversight</span></a>
+    <p>Defensive research on trustworthy oversight of AI agent teams.</p>
+    <div><a href="https://github.com/s7d11/swarm-oversight">Source code</a><a href="https://apartresearch.com/sprints/swarm-alignment-2026">Swarm Alignment Hackathon</a></div>
+    <small>MIT License · The canary is simulated; no real credentials or network egress are used.</small>
+  </footer>
+</body>
+</html>
