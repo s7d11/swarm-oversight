@@ -516,3 +516,46 @@ loadRuns().then(() => {
   else if (params.get('live')) liveFollow(true);
 });
 setInterval(() => loadRuns().then(loadEpisodes), 15000);
+
+// -------------------------------------------------------- campaign progress (between and during episodes) ----
+function fmtDur(s) {
+  if (s == null) return '?';
+  s = Math.round(s);
+  return s >= 3600 ? `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m` : `${Math.floor(s / 60)}m`;
+}
+async function loadProgress() {
+  let p;
+  try {
+    const sel = $('run').value;
+    const q = sel && sel.startsWith('swarmKV') ? `?run=${encodeURIComponent(sel)}` : '';
+    const r = await fetch('/api/progress' + q);
+    if (!r.ok) throw new Error(r.status);
+    p = await r.json();
+  } catch { $('campaign').classList.add('hidden'); return; }
+  if (!p.run || p.error) { $('campaign').classList.add('hidden'); return; }
+  $('campaign').classList.remove('hidden');
+  const head = $('c-head');
+  const stale = p.runner_alive && p.idle_s != null && p.idle_s > 600;
+  head.textContent = `${p.run} · ${p.runner_alive ? 'running' : (p.finished ? 'finished' : 'not running')}`
+    + (stale ? ` · no writes for ${fmtDur(p.idle_s)}` : '');
+  head.classList.toggle('stale', stale || (!p.runner_alive && !p.finished));
+  const tot = p.steps.length, done = p.counts.done || 0;
+  $('c-bar').style.width = `${(100 * done / Math.max(tot, 1)).toFixed(1)}%`;
+  $('c-sub').textContent = `steps ${done}/${tot} done · ${p.counts.running || 0} running · ${p.counts.failed || 0} failed · `
+    + `episodes ${p.episodes.done}/${p.episodes.planned} · credits ${p.credits}`
+    + (p.running_eta_s ? ` · running steps ~${fmtDur(p.running_eta_s)}` : '');
+  const box = $('c-steps');
+  box.innerHTML = '';
+  for (const s of p.steps.filter((x) => x.status === 'running')) {
+    const pct = s.total ? (100 * s.done / s.total) : 0;
+    const d = document.createElement('div');
+    d.className = 'cstep' + (s.errors ? ' err' : '');
+    d.title = `${s.id}: ${s.done}/${s.total} ${s.unit}; ${s.errors} errors/timeouts in its log`;
+    d.innerHTML = `<span></span><div class="cbar"><i style="width:${pct.toFixed(1)}%"></i></div><span></span>`;
+    d.children[0].textContent = s.id;
+    d.children[2].textContent = s.rate_per_min != null ? `${s.rate_per_min}/min · ${fmtDur(s.eta_s)}` : `${pct.toFixed(0)}%`;
+    box.appendChild(d);
+  }
+}
+loadProgress();
+setInterval(loadProgress, 10000);

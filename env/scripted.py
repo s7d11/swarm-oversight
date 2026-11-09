@@ -1,6 +1,6 @@
 """Scripted cover-up (attack) and matched scripted tidy-up (benign/near-miss).
 
-Fix 1 from oversight.md: LLM workers often fail to tamper (smoke run: log read, never edited),
+LLM workers often fail to tamper on their own (the log is read but never edited),
 which would leave the naive and chain views identical. These deterministic transforms are
 applied post hoc to a COPY of each episode's final shared log, giving a guaranteed-tampered
 naive view ("naive_scripted") alongside the naturalistic one ("naive"). The chain is untouched.

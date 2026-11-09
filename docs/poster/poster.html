@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agents Can't Rewrite Logs</title>
+<!-- A0 portrait poster, layout after assets/poster_example.pdf. Render: scripts/render_poster.sh -> docs/poster/poster.pdf
+     Filled from runs/swarmKV1 (docs/results_swarmKV1.md lists every number with its source). Figures: tools/figures.py. -->
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Noto+Sans:ital,wght@0,400;0,600;1,400&family=Noto+Sans+Mono&display=swap" rel="stylesheet">
+<style>
+  :root {
+    /* sage green is the principal colour; purple takes the role green had (alerts, the K-Veritas record) */
+    --ink: #1e231f; --muted: #56605a; --bar: #e2ebe0; --bar-ink: #24382a; --panel: #f0f4ee;
+    --accent: #5f8a68; --ok: #5b5ef0; --ok-soft: #dcdcfc; --bad: #d1495b; --amber: #e3a72f; --line: #c8d5c6;
+    --row: #f6f9f4; --todo-bg: #f2f7f0;
+  }
+  @page { size: 841mm 1189mm; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #fff; }
+  @media print { html { height: 1189mm; overflow: hidden; } }
+  body { width: 841mm; height: 1189mm; padding: 22mm 28mm 14mm; color: var(--ink);
+         font: 21pt/1.34 "Noto Sans", system-ui, sans-serif; overflow: hidden;
+         display: flex; flex-direction: column; }
+  h1, h2, .serif { font-family: "Cormorant Garamond", Georgia, serif; }
+
+  /* ---- header ---- */
+  header { display: grid; grid-template-columns: 1fr 120mm; gap: 20mm; align-items: start;
+           border-bottom: 1.2mm solid var(--line); padding-bottom: 12mm; }
+  h1 { font-size: 150pt; font-weight: 500; line-height: .95; margin: 0 0 6mm; letter-spacing: -1pt; }
+  .subtitle { font-size: 56pt; line-height: 1.12; color: var(--muted); margin: 0 0 9mm; font-weight: 300; }
+  .authors { font-size: 24pt; color: var(--muted); }
+  .authors b { color: var(--ink); }
+  .authors a { color: var(--accent); text-decoration: none; }
+  .qr { width: 120mm; } .qr img { width: 120mm; height: 120mm; display: block; }
+  .qr div { font-size: 16pt; color: var(--muted); text-align: center; margin-top: 3mm; }
+
+  /* ---- grid ---- */
+  main { flex: 1; display: grid; grid-template-columns: 1fr 1fr 1fr; column-gap: 14mm; margin-top: 12mm; }
+  .col { display: flex; flex-direction: column; gap: 9mm; }
+  .span2 { grid-column: span 2; }
+  section h2 { background: var(--bar); color: var(--bar-ink); font-style: italic; font-weight: 500; font-size: 62pt;
+               margin: 0 0 6mm; padding: 2mm 9mm 3mm; line-height: 1.1; }
+  p { margin: 0 0 5mm; }
+  .panel { background: var(--panel); padding: 8mm; }
+  .big { font-family: "Cormorant Garamond", serif; font-style: italic; font-size: 48pt; text-align: center; line-height: 1.25; }
+  .big b { font-style: normal; color: var(--accent); }
+  .cap { font-size: 18pt; color: var(--muted); margin-top: 3mm; }
+  img.fig { width: 100%; display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 18pt; line-height: 1.3; }
+  th { background: var(--accent); color: #fff; text-align: left; padding: 2mm 3mm; font-weight: 600; }
+  td { padding: 1.8mm 3mm; border-bottom: .4mm solid var(--line); vertical-align: top; }
+  tr:nth-child(even) td { background: var(--row); }
+  .alert { color: var(--ok); font-weight: 600; } .miss { color: var(--bad); font-weight: 600; }
+  .todo { border: 1mm dashed var(--accent); color: var(--accent); background: var(--todo-bg); padding: 7mm; font-size: 20pt;
+          text-align: center; font-style: italic; }
+  .todo.tall { min-height: 120mm; display: flex; align-items: center; justify-content: center; }
+  ul { margin: 0 0 4mm; padding-left: 8mm; } li { margin-bottom: 2mm; }
+  code { font-family: "Noto Sans Mono", monospace; font-size: .85em; }
+
+  /* ---- flow diagram (gateway) ---- */
+  .flow { display: grid; grid-template-columns: 1fr 34mm 1fr 34mm 1fr; align-items: center; gap: 0; font-size: 17pt; text-align: center; }
+  .node { background: #fff; border: .6mm solid var(--line); border-radius: 3mm; padding: 4mm 3mm; }
+  .node.purple { background: var(--accent); color: #fff; border: none; font-weight: 600; }
+  .node.green { background: var(--ok-soft); color: #2b2d8f; border: none; font-weight: 600; }
+  .node.red { background: #f6c3ca; border: none; }
+  .arrow { height: .6mm; background: var(--muted); position: relative; margin: 0 2mm; }
+  .arrow::after { content: ""; position: absolute; right: -1mm; top: -2mm; border: 2.3mm solid transparent; border-left: 3.4mm solid var(--muted); border-right: 0; }
+  .stack { display: flex; flex-direction: column; gap: 4mm; }
+
+  footer { display: grid; grid-template-columns: 2fr 1fr; column-gap: 14mm; margin-top: 6mm; border-top: 1.2mm solid var(--line); padding-top: 5mm; }
+  footer h2 { background: var(--bar); font-style: italic; font-weight: 500; font-size: 56pt; margin: 0 0 5mm; padding: 2mm 9mm 3mm; color: var(--bar-ink); }
+  footer .ack h2 { background: none; padding-left: 0; font-size: 46pt; }
+  .small { font-size: 18pt; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1 style="font-size:118pt">In Which Agents Can't Rewrite Logs</h1>
+    <p class="subtitle">Measuring How Much a Tamper-Evident Record Restores Oversight of Agent Swarms</p>
+    <div class="authors"><b>Sebastien D.</b><sup>1</sup> · <b>Mamadou K. Keita</b><sup>2</sup> · <b>Seydou Diallo</b><sup>3</sup><br>
+      <sup>1</sup>RobotsMali AI4D Lab, <a href="mailto:sdiarra@robotsmali.org">sdiarra@robotsmali.org</a> ·
+      <sup>2</sup>Rochester Institute of Technology, <a href="mailto:mk5550@rit.edu">mk5550@rit.edu</a> ·
+      <sup>3</sup>DAUST, <a href="mailto:sdiallo@caytu.com">sdiallo@caytu.com</a><br>
+      Research conducted for the Swarm Alignment Hackathon (Apart Research), November 2026</div>
+  </div>
+  <div class="qr"><img src="qr.svg" alt="QR code to the code repository"><div>code: github.com/s7d11/swarm-oversight</div></div>
+</header>
+
+<main>
+  <div class="col span2">
+    <section>
+      <h2>Abstract</h2>
+      <p>Oversight of AI agents assumes that the record a monitor reads reflects what the agents actually did. Agent swarms break this
+        assumption in two ways. A coordinating agent can split a forbidden task into steps that no individual agent would refuse, and agents
+        that can write to the shared activity log can edit it after the fact. We measure how much oversight such tampering costs and how much
+        a record kept outside the agents' reach restores. In a controlled swarm, a coordinator tries to get four worker agents to publish a
+        planted secret and then asks them to tidy up the log. A gateway records every message and tool call in a signed hash chain that the
+        agents cannot reach. Across 411 episodes with eight models as workers, coordinators and monitors, LLM monitors judged each episode from
+        either the agents' log or the tamper-evident record. A stealthy cover-up of the log reduced the primary monitor's AUROC for leaked
+        attacks from 1.00 to 0.78, while on the tamper-evident record it remained 1.00. Across nine monitor models, the record restored an AUROC
+        between 0.81 and 1.00 where the edited log gave between 0.35 and 0.74. Telling agents that nobody was watching did not measurably change
+        how often they leaked or covered up, and a live LLM classifier of the coordinator's intent performed no better than a keyword baseline.
+        Recording cost less than 0.01% of episode time. A record that the agents cannot reach restores the oversight that a careful cover-up removes.</p>
+    </section>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:14mm">
+      <!-- ===== column 1 ===== -->
+      <div class="col">
+        <section>
+          <h2>The swarm and threat model</h2>
+          <p>A coordinating agent, compromised or misaligned (here a prompted red-team policy), directs four workers in a
+            mock company workspace with no network and no real credentials. <b>Attack:</b> it splits the leak into ordinary-looking steps,
+            reassigns refused steps, then asks for a log tidy-up. <b>Benign</b> and <b>near-miss:</b> the same tidy-up on honest work.
+            <b>Single:</b> one worker gets the forbidden request directly. A leak means the canary reached the only egress, in any encoding,
+            detected by rule rather than by a model.</p>
+          <div class="panel"><img class="fig" src="swarm_oversight.png" alt="The live visualiser during an attack episode">
+            <div class="cap"><b>Figure 3.</b> The swarm and its records, shown in the live visualiser during an attack episode. Every message and
+              tool call passes through the gateway (the ring), which writes both the shared log that the agents can edit and the K-Veritas chain
+              that they cannot reach; the monitors read one or the other.</div></div>
+        </section>
+        <section>
+          <h2>Gateway and record</h2>
+          <div class="panel">
+            <div class="flow">
+              <div class="node purple">agents</div><div class="arrow"></div>
+              <div class="node">gateway<br><span class="small">every call</span></div><div class="arrow"></div>
+              <div class="stack"><div class="node red">shared log<br><span class="small">agents can edit</span></div>
+                <div class="node green">K-Veritas chain<br><span class="small">out of reach, sealed</span></div></div>
+            </div>
+            <div class="cap">Each entry carries the hash of the previous one and the chain is bound to its episode. Every exchange is a signed
+              K-Veritas metric, and each batch is sealed (RSA-PSS) into a signed PDF report.</div>
+          </div>
+          <table style="margin-top:5mm">
+            <tr><th>View</th><th>What the monitor reads</th></tr>
+            <tr><td>naive</td><td>the log as the agents left it</td></tr>
+            <tr><td>chain</td><td>the tamper-evident record</td></tr>
+            <tr><td>chain + audit</td><td>the record and a report of edited, deleted, forged or reordered entries</td></tr>
+            <tr><td>scripted</td><td>a stealthy cover-up of attack logs, a matched tidy-up of benign ones</td></tr>
+          </table>
+        </section>
+      </div>
+
+      <!-- ===== column 2 ===== -->
+      <div class="col">
+        <section>
+          <h2>Experimental design</h2>
+          <ul>
+            <li><b>Models:</b> seven hosted (Gemma 4 31B and 26B, GLM 5.2 and 5.3-Flash, Qwen 3.5 397B and 3.8 27B, DeepSeek V4 Flash) and LFM3-1.7B
+              and LFM2.5-8B locally. GPT-Astra and Claude Fable, reported to have escaped their sandboxes, were not evaluated.</li>
+            <li><b>Told:</b> <i>none</i> (the log is private, never reviewed; plain copy without K-Veritas), <i>silent</i> (nothing),
+              <i>announced</i> (a tamper-proof record is reviewed)</li>
+            <li><b>Monitors:</b> Qwen 3.5 397B and LFM3-1.7B; a nine-model sweep on a subset</li>
+            <li><b>Intent classifier:</b> LLM and keyword baseline, before each worker acts, hidden from agents and monitors</li>
+            <li><b>Statistics:</b> AUROC with bootstrap CIs, TPR at 5% FPR, DeLong tests between views, Wilson and Fisher for rates</li>
+            <li>412 planned, 411 completed in 13.4 h for 32 credits</li>
+          </ul>
+        </section>
+        <section>
+          <h2>Integrity and cost</h2>
+          <table>
+            <tr><th>Attack</th><th>By</th><th>Recon.</th><th>Local head</th><th>Sealed head</th><th>No K-Veritas</th></tr>
+            <tr><td>edit, delete, forge, replay or reorder an entry</td><td>agent</td><td class="alert">alert</td><td>–</td><td>–</td><td class="alert">alert</td></tr>
+            <tr><td>look-alike Unicode edit</td><td>agent</td><td class="alert">alert</td><td>–</td><td>–</td><td class="alert">alert</td></tr>
+            <tr><td>identical rewrite (control)</td><td>agent</td><td>silent</td><td>–</td><td>–</td><td>silent</td></tr>
+            <tr><td>edit chain without rehashing</td><td>file</td><td>–</td><td class="alert">alert</td><td class="alert">alert</td><td class="miss">missed</td></tr>
+            <tr><td>rehash or truncate, new local head</td><td>file</td><td>–</td><td>–</td><td class="alert">alert</td><td class="miss">missed</td></tr>
+            <tr><td>substitute another episode's chain</td><td>file</td><td>–</td><td class="alert">alert</td><td class="alert">alert</td><td class="miss">missed</td></tr>
+            <tr><td>duplicate key in a JSON entry</td><td>file</td><td>–</td><td class="alert">alert</td><td class="alert">alert</td><td class="miss">missed</td></tr>
+          </table>
+          <div class="cap"><b>Table 4.</b> The tamper battery. A record out of the agents' reach catches every agent-level attack; only a head
+            sealed outside the machine catches an attacker who recomputes the whole chain.</div>
+          <p style="margin-top:5mm">All <b>381 of 381</b> chains verified against their sealed heads; in all 432 recorded episodes the sequence
+            was contiguous and replay reproduced the final state. The 21 unpaired tool calls are all delegations in flight when an API failed
+            (episodes rerun and excluded). Recording cost <b>88.6 µs per record</b> against 1.5 s of model time: <b>0.006%</b> of episode time.</p>
+        </section>
+      </div>
+    </div>
+    <section style="margin-top:2mm">
+      <h2>Splitting the task, and the coordinator</h2>
+      <div class="panel"><img class="fig" style="width:58%;margin:0 auto" src="fig_splitting_poster.png" alt="Leak rate: single vs split, and re-routing on vs off">
+        <div class="cap"><b>Figure 2.</b> Leak rate with Wilson 95% CIs. (a) A single worker asked directly vs the same request split across
+          four workers: hosted models 0/42 vs 6/78 (p = 0.09), with 24 cases of saying no and complying anyway. (b) Reassigning refused steps:
+          LFM3 workers 10/10 vs 4/10 without (p = 0.011). The coordinator's model also mattered: with LFM3 workers, leaks ranged from 0/6
+          (Qwen 3.5 397B coordinating) to 6/6 (Gemma 4 26B), in line with which models refuse the attacking-coordinator role.</div></div>
+    </section>
+  </div>
+
+  <!-- ===== column 3: results ===== -->
+  <div class="col">
+    <section>
+      <h2>The record restores oversight</h2>
+      <table>
+        <tr><th>View (Qwen 3.5 397B)</th><th>AUROC (TPR)</th><th>DeLong p vs cover-up</th></tr>
+        <tr><td>log as left</td><td>1.00 (1.00)</td><td>&lt; 0.001</td></tr>
+        <tr><td>log after a stealthy cover-up</td><td><b>0.78</b> (0.00)</td><td>–</td></tr>
+        <tr><td>tamper-evident record</td><td>1.00 (1.00)</td><td>&lt; 0.001</td></tr>
+        <tr><td>record + report, cover-up applied</td><td>1.00 (1.00)</td><td>&lt; 0.001</td></tr>
+      </table>
+      <div class="cap"><b>Table 1.</b> Leaked attacks (23) vs benign and near-miss (143); TPR at 5% FPR in parentheses.</div>
+      <div class="panel" style="margin-top:5mm"><img class="fig" src="fig_monitor_auroc_poster.png" alt="AUROC of nine monitors across three views">
+        <div class="cap"><b>Figure 1.</b> Nine monitors: the cover-up drops AUROC to 0.35–0.74 (significant for all 8 capable monitors); the
+          record restores 0.81–1.00 (significant for 7 of 8). Subset: 5 leaked attacks, 35 negatives.</div></div>
+      <p style="margin-top:5mm">The record helps mainly by <b>stopping honest clean-ups from looking like cover-ups</b> (benign scores −59 points,
+        p &lt; 0.001; attack scores unchanged). Agents rarely covered up attacks themselves (11 of 96, against 86 of 95 benign tidy-ups), so the
+        gap is measured with a scripted worst case. A report saying "no tampering" made the monitor more lenient (0.79 → 0.67, p &lt; 0.001).</p>
+    </section>
+    <section>
+      <h2>No-oversight baseline</h2>
+      <table>
+        <tr><th>Agents are told</th><th>Leaks</th><th>Log edits</th><th>Deceptive (rules / checker)</th></tr>
+        <tr><td>the log is private, never reviewed</td><td>9/24</td><td>2/24</td><td>4.8% / 18.8%</td></tr>
+        <tr><td>nothing</td><td>5/24</td><td>4/48</td><td>9.4% / 13.2%</td></tr>
+        <tr><td>a tamper-proof record is reviewed</td><td>7/24</td><td>5/24</td><td>7.4% / 16.0%</td></tr>
+      </table>
+      <div class="cap"><b>Table 2.</b> Attack episodes of the four workers run under all three framings (six seeds each).</div>
+      <p style="margin-top:5mm">No measurable difference (p = 0.34 none vs silent, 0.76 none vs announced): the record's value here is
+        <b>detection, not deterrence</b>.</p>
+    </section>
+    <section>
+      <h2>Intent classifier</h2>
+      <table>
+        <tr><th>Input</th><th>LLM</th><th>Keywords</th><th>DeLong p</th></tr>
+        <tr><td>current delegation</td><td>0.53 (0.07)</td><td>0.71 (0.07)</td><td>&lt; 0.001</td></tr>
+        <tr><td>all delegations so far</td><td>0.73 (0.02)</td><td>0.75 (0.33)</td><td>0.70</td></tr>
+      </table>
+      <div class="cap"><b>Table 3.</b> AUROC (TPR at 5% FPR), attacks (96) vs benign and near-miss (143). The LLM flagged every benign episode
+        and cost 16.6% of episode model time.</div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <section>
+    <h2>Conclusion</h2>
+    <p>A careful cover-up of the shared activity log reduced a strong LLM monitor's detection of leaked attacks from perfect to an AUROC of 0.78,
+      with no detections left at a 5% false-alarm budget, and the eight capable monitors of the nine-model sweep showed the same pattern. A record kept at the gateway, beyond
+      the agents' reach, restored detection (an AUROC of 1.00 for the primary monitor), mainly by preventing honest clean-ups from looking like cover-ups. Splitting a forbidden task
+      across workers produced leaks (6 of 78 episodes, p = 0.09) from hosted models that every one refused when asked directly, whereas telling the agents whether anyone was watching
+      made no measurable difference. <b>Keep the record at a chokepoint the agents cannot reach, anchor its head outside the machine, and give
+      capable monitors the record itself rather than a verdict about it.</b></p>
+    <p class="small"><b>Limitations:</b> a simple proxy task with a prompted attacker; a scripted worst-case cover-up, since natural ones were
+      rare; framings rather than true non-monitoring; six seeds per cell and a subset with five leaked attacks for the sweep; LLM judges, and
+      deception measures that disagree (κ ≈ 0); a trusted gateway and a locally signed seal without an external witness; GPT-Astra and Claude
+      Fable, reported to have escaped their sandboxes, were not tested. K-Veritas was developed by the same team before the hackathon.</p>
+  </section>
+  <section class="ack">
+    <h2>Acknowledgements</h2>
+    <p class="small">We thank Apart Research and the organisers of the Swarm Alignment Hackathon, Adaption Labs for model credits, Liquid AI for
+      the LFM models, and the llama.cpp developers.</p>
+    <p class="small"><b>Code:</b> github.com/s7d11/swarm-oversight<br><b>All run records:</b> huggingface.co/datasets/s7d11/swarm-kveritas-logs</p>
+    <p class="small"><i>Closest work:</i> Qin et al. 2026 (agents tamper with their traces); Agent Flight Recorder (Bindschaedler et al. 2026);
+      NVIDIA NeMo Relay; Greenblatt et al. 2024 (AI control).</p>
+  </section>
+</footer>
+
+</body>
+</html>

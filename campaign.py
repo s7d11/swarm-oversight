@@ -472,7 +472,7 @@ def cmd_start(spec_path: str, name: str | None) -> str:
     run_dir = os.path.join(ROOT, "runs", next_run_name(spec, name))
     os.makedirs(os.path.join(run_dir, "config_snapshot"), exist_ok=False)
     shutil.copy(spec_path, os.path.join(run_dir, "spec.yaml"))
-    for src in (os.path.join(ROOT, "swarm.conf"), "/etc/default/llama-swarm"):
+    for src in (os.path.join(ROOT, "swarm.conf"), os.path.join(ROOT, "swarm.local.conf")):
         if os.path.exists(src):
             shutil.copy(src, os.path.join(run_dir, "config_snapshot", os.path.basename(src)))
     env_keys = ["LOCAL_LLM_ROUTES", "SWARM_COORD_MODEL", "SWARM_WORKER_MODEL", "SWARM_MONITOR_MODEL", "MONITOR_TEMPERATURE",

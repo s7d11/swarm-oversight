@@ -1,20 +1,23 @@
-# ---- secrets ----
+# ---- secrets and machine-specific settings ----
 .env
+swarm.local.conf
 *.pem
 !keys/seal-public.pem
+keys/*.local.pem
 
-# ---- K-Veritas work (pre-existing; lives in ~/kv, never committed here) ----
+# ---- dependencies fetched and built by scripts/setup.sh ----
+third_party/
+models/
 lib/*.so
 lib/*.so.*
 lib/*.bak-*
 bin/
 
-# ---- data: experiment records stay on disk, not in git ----
+# ---- run records (kept on disk or offloaded to a dataset, never in git) ----
 logs/
 sealed/
 report/
-runs/*
-!runs/INDEX.md
+runs/
 
 # ---- local tooling ----
 .venv/
@@ -22,4 +25,7 @@ __pycache__/
 .pytest_cache/
 .claude/
 *.pyc
-keys/
+*:Zone.Identifier
+
+# ---- paper sources (kept locally, not published) ----
+submission/

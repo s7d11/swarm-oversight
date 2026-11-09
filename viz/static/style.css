@@ -60,3 +60,13 @@ aside { display: flex; flex-direction: column; border-left: 1px solid var(--line
 @media (max-width: 900px) { main { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } aside { border-left: 0; border-top: 1px solid var(--line); } }
 .sys.intent { border: 1px solid #a371f7; color: #d2a8ff; background: #a371f714; }
 .sys.intent.flagged { border-color: var(--red); color: #ffa198; background: #f8514920; font-weight: 600; }
+
+/* campaign progress card (/api/progress, same data as scripts/monitor.sh) */
+#campaign small { color: var(--muted); }
+.cbar { height: 6px; background: #0d1117; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin: 6px 0 2px; }
+.cbar i { display: block; height: 100%; width: 0; background: var(--teal); transition: width .6s; }
+.cstep { display: grid; grid-template-columns: 1fr 70px 70px; gap: 6px; align-items: center; font-size: 11.5px; margin-top: 4px; }
+.cstep span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cstep .cbar { margin: 0; height: 5px; }
+.cstep.err span:first-child::after { content: " ⚠"; color: var(--orange); }
+#c-head.stale { color: var(--red); }

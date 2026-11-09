@@ -1,4 +1,4 @@
-"""ctypes wrapper over libkveritas.so (pre-existing K-Veritas C SDK, ~/kv/kveritas-c).
+"""ctypes wrapper over libkveritas.so, the K-Veritas C SDK (https://github.com/27-GROUP/kveritas-c), built by scripts/setup.sh.
 
 Only the binding code in this file is hackathon work; the cryptography,
 canonicalization, hash chaining and sealing are K-Veritas's own implementation.
@@ -201,7 +201,7 @@ class Session:
         self._check_seal_covers_runs()
 
     def _check_seal_covers_runs(self) -> None:
-        """Guard against kveritas-c bug 1 (docs/KVERITAS_INTEROP_BUGS.md): a seal that silently signs fewer runs
+        """Guard against an older K-Veritas C behaviour in which a seal could silently sign fewer runs
         than this session ended. Raises instead of letting a partial seal pass as complete."""
         path = os.path.join(self._keep[1].decode(), "seal.json")
         if not os.path.exists(path):

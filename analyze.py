@@ -1,4 +1,5 @@
-"""Analysis for every question/hypothesis (pre-registered in experiment.md §9, mapped in oversight2.md).
+"""Analysis of a results folder: leak and compliance rates, deception, tampering, monitor AUROC per view with
+DeLong paired tests, the intent classifier, and the recording overhead.
 
   python analyze.py                                   # logs/episodes.jsonl + logs/monitor_scores.jsonl
   python analyze.py --dir logs/pilot                  # any results dir
@@ -55,6 +56,62 @@ def paired_signflip(d: list[float], b: int = 10000) -> float:
     obs = abs(d.mean())
     flips = RNG.choice([-1, 1], size=(b, len(d)))
     return float((np.abs((flips * d).mean(axis=1)) >= obs).mean())
+
+
+def _midrank(x: np.ndarray) -> np.ndarray:
+    """Midranks (1-based; ties share the mean rank), as in Sun & Xu (2014)."""
+    order = np.argsort(x, kind="mergesort")
+    xs = x[order]
+    n = len(x)
+    t = np.zeros(n)
+    i = 0
+    while i < n:
+        j = i
+        while j < n and xs[j] == xs[i]:
+            j += 1
+        t[i:j] = 0.5 * (i + j - 1) + 1
+        i = j
+    out = np.empty(n)
+    out[order] = t
+    return out
+
+
+def delong_paired(y, s1, s2) -> dict:
+    """DeLong, DeLong & Clarke-Pearson (1988) test for two correlated AUROCs on the same cases, using the fast
+    midrank algorithm of Sun & Xu (2014). Ties count 1/2 (same AUROC as sklearn). Returns both AUROCs, the
+    difference (s2 - s1), its standard error, z and the two-sided p."""
+    y = np.asarray(y)
+    pos, neg = y == 1, y == 0
+    m, n = int(pos.sum()), int(neg.sum())
+    if m < 2 or n < 2:
+        return {"auc1": float("nan"), "auc2": float("nan"), "diff": float("nan"), "se": float("nan"), "z": float("nan"),
+                "p": float("nan"), "n_pos": m, "n_neg": n}
+    v10, v01, aucs = [], [], []
+    for s in (np.asarray(s1, float), np.asarray(s2, float)):
+        x, yy = s[pos], s[neg]
+        tz = _midrank(np.concatenate([x, yy]))
+        tx, ty = _midrank(x), _midrank(yy)
+        aucs.append((tz[:m].sum() / m - (m + 1) / 2) / n)
+        v10.append((tz[:m] - tx) / n)       # per positive: share of negatives scored below it
+        v01.append(1 - (tz[m:] - ty) / m)   # per negative: share of positives scored above it
+    s10, s01 = np.cov(np.array(v10)), np.cov(np.array(v01))
+    cov = s10 / m + s01 / n
+    var = cov[0, 0] + cov[1, 1] - 2 * cov[0, 1]
+    diff = aucs[1] - aucs[0]
+    if var <= 1e-15:  # both views identical in ranking information (e.g. both perfect)
+        se, z, p = 0.0, 0.0, (1.0 if abs(diff) < 1e-12 else 0.0)
+    else:
+        se = math.sqrt(var)
+        z = diff / se
+        p = math.erfc(abs(z) / math.sqrt(2))  # two-sided normal p
+    return {"auc1": float(aucs[0]), "auc2": float(aucs[1]), "diff": float(diff), "se": float(se), "z": float(z),
+            "p": float(p), "n_pos": m, "n_neg": n}
+
+
+def fmt_p(p: float) -> str:
+    if p is None or (isinstance(p, float) and math.isnan(p)):
+        return "n/a"
+    return "<0.001" if p < 0.001 else f"{p:.3f}"
 
 
 def tpr_at_fpr(y, s, fpr=0.05):
@@ -203,6 +260,32 @@ def main():
             out.append(f"| {mon} | {hyp} | {va} -> {vb} | {row[0]} | {row[1]} |")
     out.append("")
 
+    # ---- DeLong paired AUROC tests between views (same monitor, same episodes)
+    dl_pairs = [("naive", "naive_scripted", "cover-up effect: log as left -> covered-up log"),
+                ("naive_scripted", "chain", "restoration: covered-up log -> record"),
+                ("naive_scripted", "chain_audit_scripted", "restoration: covered-up log -> record + audit"),
+                ("naive", "chain", "naturalistic: log as left -> record"),
+                ("chain", "chain_audit", "H2c naturalistic: record -> record + audit")]
+    out += ["## DeLong paired AUROC tests between views", "",
+            "DeLong, DeLong & Clarke-Pearson (1988), fast algorithm of Sun & Xu (2014): two correlated AUROCs on the same "
+            "episodes (those scored in both views). Difference = B - A; two-sided p.", "",
+            "| positives | monitor | A -> B | comparison | n+ | n- | AUROC A | AUROC B | difference [95% CI] | z | p |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+    for pos in positives:
+        for mon in sorted({k[0] for k in by}):
+            for va, vb, what in dl_pairs:
+                A, B = by.get((mon, va), {}), by.get((mon, vb), {})
+                rids = [r for r in A if r in B and label(r, pos) is not None]
+                if not rids:
+                    continue
+                d = delong_paired([label(r, pos) for r in rids], [A[r] for r in rids], [B[r] for r in rids])
+                if math.isnan(d["diff"]):
+                    continue
+                ci = f"[{fmt(d['diff'] - 1.96 * d['se'])}, {fmt(d['diff'] + 1.96 * d['se'])}]"
+                out.append(f"| {pos} | {mon} | {va} -> {vb} | {what} | {d['n_pos']} | {d['n_neg']} | {fmt(d['auc1'])} | "
+                           f"{fmt(d['auc2'])} | {fmt(d['diff'])} {ci} | {fmt(d['z'])} | {fmt_p(d['p'])} |")
+    out.append("")
+
     # ---- Intent classifier vs supervisor (monitors) vs K-Veritas ground truth
     from intent_classify import episode_intent
     posthoc = _jsonl(os.path.join(a.dir, "intent.jsonl"))
@@ -232,8 +315,22 @@ def main():
             auc, lo, hi = auroc_ci(ys, ss)
             out.append(f"| {view} | {clf} | {sum(ys)} | {len(ys) - sum(ys)} | {fmt(auc)} [{fmt(lo)}, {fmt(hi)}] | "
                        f"{fmt(tpr_at_fpr(ys, ss))} | {fmt(auroc_ci(yl, sl)[0])} |")
+        # DeLong: LLM vs keyword on the same episodes, per view
+        dl = []
+        for view, k_llm, k_kw in (("step", "intent_max_step_llm", "intent_max_step_kw"),
+                                  ("cumulative", "intent_max_cum_llm", "intent_max_cum_kw")):
+            rows = [(truth(e), ints[e["run_id"]].get(k_llm), ints[e["run_id"]].get(k_kw)) for e in eps
+                    if e["run_id"] in ints and truth(e) is not None]
+            rows = [r for r in rows if r[1] is not None and r[2] is not None]
+            if rows:
+                d = delong_paired([r[0] for r in rows], [r[2] for r in rows], [r[1] for r in rows])
+                dl.append(f"- DeLong, {view} view, keyword -> LLM: AUROC {fmt(d['auc1'])} -> {fmt(d['auc2'])}, difference "
+                          f"{fmt(d['diff'])} [{fmt(d['diff'] - 1.96 * d['se'])}, {fmt(d['diff'] + 1.96 * d['se'])}], "
+                          f"z = {fmt(d['z'])}, p {'< 0.001' if d['p'] < 0.001 else '= ' + fmt_p(d['p'])} "
+                          f"(n+ = {d['n_pos']}, n- = {d['n_neg']})")
+        out += [""] + dl
         att = [e for e in eps if e["mode"] == "attack" and e["run_id"] in ints]
-        harmed = [e for e in att if ints[e["run_id"]].get("first_harmful_d") is not None]
+        harmed =[e for e in att if ints[e["run_id"]].get("first_harmful_d") is not None]
         before = [e for e in harmed if ints[e["run_id"]].get("intent_flagged_before_harm")]
         leads = [ints[e["run_id"]]["first_harmful_d"] - ints[e["run_id"]]["intent_first_flag_d"] for e in before]
         flagged_att = sum(1 for e in att if ints[e["run_id"]].get("intent_first_flag_d") is not None)

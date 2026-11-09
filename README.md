@@ -1,192 +1,175 @@
-# Swarm oversight with K-VERITAS
+# Swarm oversight with a tamper-evident record
 
-**Can a team of AI agents hide what it did, and can a tamper-evident record stop it?**
+**Can a team of AI agents hide what it did, and can a record kept outside the agents' reach stop it?**
 
-A coordinator agent splits a forbidden task (publishing a planted secret) into harmless-looking steps for four worker agents. It then has them "tidy up" the shared activity log. Every message and tool call passes through a gateway that records it in a **K-Veritas hash chain** the agents can't reach. LLM monitors then judge each episode from the agents' (possibly edited) log, or from the tamper-evident record.
+In this testbed, a coordinating agent tries to get four worker agents to publish a planted secret, splitting the forbidden task into harmless-looking steps, and then asks them to tidy up the shared activity log. Every message and tool call passes through a gateway that records it in a [K-Veritas](https://github.com/27-GROUP/kveritas-c) hash chain the agents cannot reach, sealed and signed after every batch. LLM monitors then judge each episode either from the agents' (possibly edited) log or from the tamper-evident record. The testbed also measures whether agents deceive more when they are told that nobody is watching, and whether a classifier at the gateway can recognise the coordinator's intent before harm occurs.
 
-**Run 2 also tests a no-oversight baseline.** Agents are told the log is private and never reviewed (no K-Veritas), told nothing, or told every action is recorded in a tamper-proof log. The run measures whether they **deceive** more when they think no one is watching.
+Built for the [Apart Research Swarm Alignment Hackathon](https://apartresearch.com/sprints/swarm-alignment-2026), November 2026.
 
-Built for the Apart Research Swarm Alignment Hackathon (Tracks 4 and 2), November 2026.
+![The live visualiser following an attack episode](assets/swarms.gif)
 
-> **Pre-existing code:** K-Veritas (the C SDK in `~/kv/kveritas-c`, built into `lib/libkveritas.so`, and the Go verifier `kveritas`) predates the hackathon (Keita & Homan, NeurIPS 2026 Position Track). Everything in this repository is hackathon work, except that library. This includes the bindings (`kv.py`), the harness, the experiments and the analysis.
+## Results in brief
 
----
+<a href="docs/poster/poster.pdf"><img src="docs/poster/preview.png" alt="Poster (A0, PDF)" width="240" align="right"></a>
 
-![./assets/swarm_oversight.png](./assets/swarms.gif)
+Across 411 episodes with seven hosted models (Gemma 4, GLM 5.2 and 5.3-Flash, Qwen 3.5 and 3.8, DeepSeek V4 Flash) and two local models (LFM3-1.7B, LFM2.5-8B):
 
----
+- A stealthy cover-up of the shared log cut the primary monitor's AUROC for leaked attacks from 1.00 to 0.78 (DeLong p < 0.001). On the tamper-evident record it stayed at 1.00. Across the eight capable monitors of a nine-model sweep, the record restored an AUROC of 0.81–1.00 where the edited log gave 0.35–0.74.
+- The record helps mainly by preventing honest clean-ups from looking like cover-ups. Agents rarely covered up attacks on their own, so the size of the gap is measured with a scripted worst-case cover-up.
+- Splitting a forbidden task across workers produced leaks that every hosted model refused when asked directly (6 of 78 episodes against 0 of 42; p = 0.09, so the effect is small). Telling agents whether anyone was watching made no measurable difference.
+- A live LLM intent classifier was no better than a keyword baseline.
+- Every sealed chain verified, and recording cost about 0.006% of episode time.
 
-## Quick start
+Every number, with the dataset file it comes from, is in [`docs/results_swarmKV1.md`](docs/results_swarmKV1.md); the figures are in [`docs/figures/`](docs/figures/). The poster ([PDF](docs/poster/poster.pdf)) summarises the work on one A0 page. The complete records of every episode, including the signed batch reports, are published at [huggingface.co/datasets/s7d11/swarm-kveritas-logs](https://huggingface.co/datasets/s7d11/swarm-kveritas-logs).
+
+## Requirements
+
+- Linux or macOS (on Windows, use WSL 2).
+- Python 3.10 or newer, a C compiler, `git`, `curl`, `pkg-config`, and the OpenSSL and libcurl development files (on Debian or Ubuntu: `sudo apt install build-essential git curl pkg-config libssl-dev libcurl4-openssl-dev python3-venv`; on macOS: `xcode-select --install` and `brew install openssl curl pkg-config`).
+- Go 1.22 or newer, to build the K-Veritas verifier ([go.dev/dl](https://go.dev/dl/)).
+- An [Adaption Labs](https://adaptionlabs.ai) API key for the hosted models.
+- For the two local models: `cmake`, about 6 GB of disk space and, ideally, an NVIDIA GPU with the CUDA toolkit (on macOS, Metal is used). The local models are needed for the full campaign; single batches can run with hosted models only (add `--intent-model none`, since the intent classifier runs on LFM3).
+
+## Setup
+
+Everything is fetched from its source and compiled locally by one script:
 
 ```sh
-cd ~/prima/swarm
-./swarm.sh doctor        # API key, venv, library, both local models, Go, kveritas
-scripts/run2.sh          # build + verify + resume test, then launch run 2 (asks first)
+git clone https://github.com/s7d11/swarm-oversight.git
+cd swarm-oversight
+scripts/setup.sh --local-models     # omit --local-models to skip llama.cpp and the model downloads
 ```
 
-Then watch it:
+The script:
+
+1. checks the system tools;
+2. creates `.venv` and installs the hash-locked Python dependencies from `requirements.txt`;
+3. clones the K-Veritas C SDK ([27-GROUP/kveritas-c](https://github.com/27-GROUP/kveritas-c)) into `third_party/` and compiles `lib/libkveritas.so`;
+4. clones the K-Veritas Go verifier ([27-GROUP/kveritas-go](https://github.com/27-GROUP/kveritas-go)) and compiles `bin/kveritas`;
+5. with `--local-models`, clones [llama.cpp](https://github.com/ggml-org/llama.cpp) at the revision used for the reported runs, compiles `llama-server` (with CUDA if `nvcc` is available), and downloads [LFM3-1.7B](https://huggingface.co/lmstudio-community/LFM3-1.7B-GGUF) (Q8_0) and [LFM2.5-8B-A1B](https://huggingface.co/LiquidAI/LFM2.5-8B-A1B-GGUF) (Q4_0) into `models/`;
+6. creates a signing key for your sealed reports in `~/.config/swarm-kveritas/` and a `.env` file from `.env.example`;
+7. runs the offline test suite.
+
+Each step is skipped if its result already exists, so the script can be run again safely. Sources and revisions can be changed with environment variables (`KVERITAS_C_REF`, `LLAMA_CPP_REF` and others; see the top of the script). Add `--kveritas-tests` to also run the K-Veritas C test suite.
+
+Then add your Adaption key to `.env`, start the local models and check the installation:
 
 ```sh
-./swarm.sh campaign status                     # progress per group, credits, failures
-tail -f $(ls -dt runs/swarmKV[0-9]*/ | head -1)campaign.log
-# live 3D view + chat dialog:  http://127.0.0.1:8765/?live=1
+$EDITOR .env                        # ADAPTION_API_KEY=...
+scripts/serve_models.sh start       # LFM3-1.7B on :18081 and LFM2.5-8B on :18080 (logs in logs/)
+./swarm.sh doctor
 ```
 
-**Run everything from your own terminal.** The campaign runs detached and survives closing the terminal.
+## Running experiments
 
----
+A single batch of episodes:
 
-## One-time setup
+```sh
+./swarm.sh run --mode attack --seeds 0-2 --worker-model qwen3.8-27b --intent-model none   # hosted models only
+./swarm.sh run --mode benign --seeds 0-2 --worker-model local:lfm3-1.7b --oversight announced
+./swarm.sh score --results logs/episodes.jsonl      # monitor scoring (resumable)
+./swarm.sh analyze --dir logs                       # all tables -> logs/analysis.md
+```
 
-| Need | How |
+Modes are `attack`, `benign`, `nearmiss` and `single`; `--oversight` sets what the agents are told (`none`, `silent` or `announced`). `./swarm.sh help` lists every command and flag, and `swarm.conf` documents the defaults.
+
+**Campaigns** run many batches, scoring, deception checks, the tamper audit, sealing and the analyses as one resumable job. A small smoke campaign (about 12 episodes, under one credit) checks that everything works:
+
+```sh
+./swarm.sh campaign start campaigns/smoke.yaml
+scripts/monitor.sh                  # live progress: bars, rates and ETA for every running step
+./swarm.sh campaign stop            # graceful; resume later with ./swarm.sh campaign resume
+```
+
+**Reproducing the reported campaign** (`campaigns/run2.yaml`: 412 episodes, about 13 hours and 32 Adaption credits with 8 batches in parallel):
+
+```sh
+scripts/run2.sh                     # rebuilds and tests K-Veritas, runs the tests, a smoke test with a forced
+                                    # interruption and resume, then asks before launching the campaign
+```
+
+Campaigns write to `runs/swarmKV<N>/`. They survive closing the terminal, and `./swarm.sh campaign resume` continues after a crash, a kill or a reboot without repeating finished work. The visualiser (`./swarm.sh viz`, then http://127.0.0.1:8765/?live=1) shows running episodes in 3D with the agents' conversation, and its Campaign panel shows the same progress as `scripts/monitor.sh`.
+
+## Records
+
+```
+runs/swarmKV<N>/
+  spec.yaml  state.json  campaign.log  config_snapshot/
+  t1/ t2_*/                                     one folder per results group
+    episodes.jsonl                              one line per episode (outcome, refusals, deception, paths)
+    <run_id>.chain.jsonl  .head  .genesis       the K-Veritas gateway chain: every exchange, hash-linked
+    <run_id>.shared.jsonl                       the agents' own (editable) log, as they left it
+    <run_id>.copy.jsonl                         no-oversight condition: plain record without K-Veritas
+    transcripts/<run_id>.transcript.pdf         readable transcript with the chain anchors embedded
+    monitor_scores*.jsonl  deception.jsonl  analysis*.md
+  sealed/<batch>/  sealed/<batch>.pdf           K-Veritas session (one run per episode) and its signed report
+  tamper_audit.json
+```
+
+Each episode is a K-Veritas run in which every exchange is a signed metric whose source is its chain hash, and each batch is sealed with an RSA-PSS signature into a PDF. The no-oversight condition deliberately has no K-Veritas record.
+
+Records stay on disk by default. To upload them to a Hugging Face dataset as the campaign runs (each episode packed losslessly, uploaded, checked and then deleted locally), set `SWARM_OFFLOAD=hf` and `SWARM_HF_REPO=<you>/<dataset>` in `swarm.local.conf` and `HF_TOKEN` in `.env`.
+
+## Verifying records
+
+Your own sealed reports verify against the public key that setup exported:
+
+```sh
+bin/kveritas verify runs/swarmKV1/sealed/<batch>.pdf --offline --public-key keys/seal-public.local.pem
+.venv/bin/python verify_chain.py runs/swarmKV1/t1/<run_id> --sealed runs/swarmKV1/sealed/<batch>
+./swarm.sh tamper-audit --episodes runs/swarmKV1/t1/episodes.jsonl
+```
+
+The published reports verify against the project's key in `keys/seal-public.pem`:
+
+```sh
+.venv/bin/hf download s7d11/swarm-kveritas-logs --repo-type dataset --include "runs/swarmKV1/sealed/*" --local-dir data
+bin/kveritas verify data/runs/swarmKV1/sealed/<batch>.pdf --offline --public-key keys/seal-public.pem
+```
+
+## Reproducing the analyses and figures from the published records
+
+```sh
+.venv/bin/hf download s7d11/swarm-kveritas-logs --repo-type dataset \
+    --include "runs/swarmKV1/*/*.jsonl" "runs/swarmKV1/*/*.md" --local-dir data
+.venv/bin/python analyze.py --dir data/runs/swarmKV1/t1 --out data/analysis.md
+.venv/bin/python tools/figures.py data/runs/swarmKV1 --out data/figures
+```
+
+## Configuration
+
+Settings are read, from lowest to highest priority, from `swarm.conf` (the documented defaults), `swarm.local.conf` (your machine's settings; git-ignored), the environment, and command-line flags. API keys live in `.env`.
+
+## Repository layout
+
+| Path | Contents |
 | --- | --- |
-| Python env, K-Veritas library | `./swarm.sh setup` (creates `.venv`, builds `lib/libkveritas.so`, runs tests) |
-| Adaption API key | `.env` in the repo root: `ADAPTION_API_KEY=...` (`ADOPTION_KEY=...` is also accepted) |
-| Local models: LFM3-1.7B on :18081 and LFM2.5-8B on :18080, both CUDA + CPU, systemd | `sudo deploy/install_llama_services.sh` (see `deploy/SETUP_AFTER_REBOOT.md`, including the WSL memory setting) |
-| Go toolchain (for the fixed verifier) | `~/.local/toolchains/go` (installed) |
-| K-Veritas signing key | Created by `scripts/run2.sh` stage 1: private key `~/.config/swarm-kveritas/seal-key.pem` (mode 600, **keep it private and backed up**), public key `keys/seal-public.pem` |
+| `run.py` | Runs a batch of episodes; one K-Veritas session per batch |
+| `campaign.py` | Resumable campaign runner (`campaigns/*.yaml`) |
+| `env/` | Sandbox, gateway, agents, coordinator, intent classifier, K-Veritas recording, record offload |
+| `monitors/`, `score_monitors.py` | Evidence views and LLM monitors |
+| `deception.py`, `intent_classify.py` | Deception checks and post-hoc intent classification |
+| `analyze.py` | All analyses, including bootstrap and DeLong paired AUROC tests |
+| `verify_chain.py`, `tools/tamper_audit.py` | Chain verification, reconciliation and the tamper battery |
+| `kv.py` | Python bindings for the K-Veritas C SDK |
+| `tools/` | Campaign checks, sealing, offload, model probes, figures |
+| `viz/` | Live visualiser and campaign progress |
+| `scripts/` | Setup, model serving, campaign reproduction, progress monitor |
+| `tests/` | Offline test suite |
+| `docs/` | Results with their sources, figures, and the A0 poster (`docs/poster/`; render with `scripts/render_poster.sh`) |
 
----
+## Third-party components
 
-## Running run 2: `scripts/run2.sh`
-
-| Stage | What it does |
-| --- | --- |
-| 1 | Preflight; creates the signing key if missing |
-| 2 | Builds kveritas-c **with the bug 1 fix** and runs its tests, then rebuilds `lib/libkveritas.so` (the old copy is kept as `.bak-*`) |
-| 3 | kveritas-go **bug 2 fix**: `gofmt`, `vet`, `test`, then builds `bin/kveritas-dev`. Your installed `kveritas` is untouched |
-| 4 | C→Go seal interop check (`tests/interop_check.sh`) |
-| 5 | Offline unit tests and the tamper audit |
-| 6 | **Smoke campaign:** `kill -9` mid-episode, resume, check no duplicates or losses, and verify every sealed PDF |
-| 7 | Restarts the visualizer and launches run 2 (`campaigns/run2.yaml`) |
-
-Options:
-- `--yes` launches without asking.
-- `--from N` restarts at stage N after a fix.
-- `--no-launch` prepares everything but doesn't launch.
-- `--skip-smoke` skips stage 6 (not recommended).
-
-Everything is logged to `runs/prep_<ts>.log`. **Nothing is committed** in the K-Veritas repos; review and commit the fixes yourself (`docs/KVERITAS_INTEROP_BUGS.md`).
-
-### Run 2 contents (`campaigns/run2.yaml`: 84 steps, 412 episodes, about 62 credits estimated, ceiling 300; 8 batches in parallel)
-
-| Tier | What |
-| --- | --- |
-| 1 | **Worker sweep:** all 7 Adaption models + LFM3 × single, attack, benign, near-miss × 6 seeds. **Oversight conditions** `none` and `announced` for 4 workers. Scoring with Qwen 3.5 397B + LFM3. Deception checks. Analysis |
-| 2 | Re-routing ablation, coordinator sweep, forging (condition C), each with scoring, deception checks and analysis |
-| 3 | 9-monitor sweep, visible vs stealthy cover-up, tidy-up confound, tamper audit, **sealing of every K-Veritas session**, analyses |
-
-### Interruptions
-
-```sh
-./swarm.sh campaign stop      # graceful; resumable
-./swarm.sh campaign resume    # after a crash, kill or reboot: continues where it stopped
-```
-
-- `state.json` is written atomically.
-- Batches resume per seed.
-- Scoring and deception checks skip work already done.
-- An episode cut off mid-way is rerun and listed as an orphan.
-- Only one runner works on a folder at a time.
-- `resume` refuses if the harness code changed (`--allow-code-change` overrides it).
-
-To resume automatically after a reboot, use `deploy/systemd/swarm-campaign@.service` (sudo).
-
-**While a campaign runs, don't edit** `swarm.sh`, `swarm.conf` or the harness code, and don't restart the LFM services.
-
----
-
-## Records and PDF reports
-
-**Nothing is kept on this machine.** With `SWARM_OFFLOAD=hf` (the default in `swarm.conf`), the records go to the **private** Hugging Face dataset `s7d11/swarm-kveritas-logs` (token: `HF_KEY` in `.env`; `./swarm.sh doctor` checks access and that the dataset is private). `env/store.py` does it in four steps:
-
-1. **After each episode:**
-   - its record files (shared log, K-Veritas chain + head + genesis, or the plain copy) are packed into one lossless `<run_id>.tar.xz`
-   - the archive and the transcript PDF are uploaded in one commit
-   - each file is checked on the Hub (size and sha256)
-   - the local files and the live feed are deleted
-   - only then is the episode marked done in `episodes.jsonl`, and the next episode starts
-2. **After each batch seal:** the K-Veritas session (`<batch>.tar.xz`) and the signed `<batch>.pdf` are handled the same way.
-3. **When the campaign finishes:** `tools/offload.py --finalize` uploads the rest of the run folder (state, logs, scores, analyses, tamper audit, orphan feeds). It then leaves only `runs/swarmKV<N>/OFFLOADED.md`, which keeps the run number taken.
-4. **If an upload fails:** after the retries, the files **stay on disk** and are retried at the end of the batch, or later with `tools/offload.py runs/swarmKV<N>`. Nothing is deleted before the Hub confirms it.
-
-**How small the records get, with no loss of fidelity:**
-- `log_read` no longer nests earlier `log_read` outputs: that self-nesting was the cause of the GB-sized episodes.
-- The live feed is deleted: it only duplicates the chain.
-- xz removes the shared-log/chain duplication and compresses the JSON. A synthetic 742 KB episode packs to 8 KB, and it comes back byte-identical with the chain still verifying.
-
-**Reading the records:**
-- Scoring, deception checks, the intent classifier, the tamper audit and `check_campaign` fetch each episode into a temporary folder and delete it afterwards (`with store.local(ep)`). Nothing goes into the HF cache.
-- The visualizer shows **live** episodes only.
-- To fetch a whole run: `.venv/bin/hf download s7d11/swarm-kveritas-logs --repo-type dataset --include "runs/swarmKV1/*" --local-dir /tmp/swarmKV1`.
-
-Layout in the dataset (the same paths the run used locally):
-
-**How each exchange is recorded in K-Veritas:**
-1. **In the gateway chain:** every message, tool call and tool result is hashed into the K-Veritas chain the moment it happens (`kv_chain_advance`). The genesis is bound to the run ID.
-2. **In the K-Veritas session:**
-   - each episode is a **K-Veritas run**, opened when the episode starts
-   - each exchange is a **metric** of that run: value = sequence number, unit = kind, step = who→whom or which tool, source = **its gateway-chain hash**
-   - the run also stores the episode outcome and the full chain head
-3. **Sealed and signed:** each batch session is signed into `sealed/<batch>.pdf`. The signature therefore covers every exchange, in order. Batches cut short by an interruption are sealed by the final `seal` step: a run that never ended is excluded and listed in `incomplete_runs.json`.
-4. **Readable transcript:** `transcripts/<run_id>.transcript.pdf` (K-Veritas `kv_pdf_write_report`) lists every exchange, with the run ID, genesis, head and sealed session embedded as metadata.
-
-The `none` condition has **no K-Veritas** by design (it's the baseline), so it has no seal and no K-Veritas PDF. Its plain record is `*.copy.jsonl`.
-
-### Coordinator-intent classifier
-
-Every coordinator delegation is classified **before the worker acts** (flag only), in two views (this step; all delegations so far), by an LLM (`local:lfm3-1.7b`, temperature 0) and a keyword baseline.
-
-Its verdicts are researcher-only records:
-- **chained in K-Veritas** with their own ids, so agents see no gaps in the shared log
-- recorded as `intent` metrics in each episode's signed K-Veritas run
-- listed in the transcript PDF
-- never visible to agents or monitors
-
-`analyze.py` compares the classifier with the supervisor (the monitors) and with the K-Veritas ground truth: AUROC, flagged-before-harm lead time, Spearman, κ and disagreements. `intent_classify.py` classifies older episodes after the fact.
-
-### Verifying records
-
-```sh
-# fetch what you want to check first (records are not on disk), e.g. a run's sealed reports:
-.venv/bin/hf download s7d11/swarm-kveritas-logs --repo-type dataset --include "runs/swarmKV<N>/sealed/*" --local-dir /tmp/kv
-# signed batch report (fixed verifier, against the project key)
-bin/kveritas-dev verify /tmp/kv/runs/swarmKV<N>/sealed/<batch>.pdf --offline --public-key keys/seal-public.pem
-# an episode's chain against the head sealed in K-Veritas (catches a rewritten chain + .head)
-.venv/bin/python verify_chain.py runs/swarmKV<N>/t1/<run_id> --sealed runs/swarmKV<N>/sealed/<batch>
-./swarm.sh tamper-audit --episodes runs/swarmKV<N>/t1/episodes.jsonl   # completeness + tamper battery
-```
-
----
-
-## Other ways to run things
-
-```sh
-./swarm.sh run --mode attack --seeds 0-4 --worker-model local:lfm3-1.7b --oversight announced   # one batch
-./swarm.sh score --results <dir>/episodes.jsonl        # monitor scoring (resumable)
-.venv/bin/python deception.py --episodes <dir>/episodes.jsonl
-./swarm.sh analyze --dir <dir>                         # all tables -> <dir>/analysis.md
-./swarm.sh viz                                         # visualizer on :8765
-scripts/ablations/run_all.sh 01 --dry-run              # run-1 style one-off ablations (not resumable)
-./swarm.sh help                                        # everything else
-```
-
----
-
-## Documentation
-
-| File | What |
-| --- | --- |
-| `instruction.md` | Full manual: parameters, campaigns (§7a), visualizer (§7b), sealing, troubleshooting |
-| `experiment.md` | Design, hypotheses, process log (every decision and change) |
-| `oversight.md`, `oversight2.md` | How each research question is operationalised; fixes; pilot results; the no-oversight baseline (RQ5) |
-| `guide.md` | Ablations, local-model setup (GPU and CPU split) |
-| `docs/KVERITAS_INTEROP_BUGS.md` | K-Veritas bugs found, fixes and status |
-| `runs/INDEX.md` | Every run and where its records are |
-| `explainer.md` | Non-technical explanation |
-| `reading.md` | Reading list (verify every reference before citing) |
-| `deploy/` | Local LLM services, WSL memory, campaign autostart |
+- **K-Veritas** ([C SDK](https://github.com/27-GROUP/kveritas-c), [Go verifier](https://github.com/27-GROUP/kveritas-go)) predates this project (Keita and Homan, *Computer Science Conferences Should Require Nonrepudiable Experimental Results*, NeurIPS 2026 Position Paper Track, [arXiv:2605.08586](https://arxiv.org/abs/2605.08586)). It is fetched and built by `scripts/setup.sh` and is not part of this repository.
+- **llama.cpp** serves the local models; **LFM3** and **LFM2.5** are Liquid AI models, used under the licences stated on their model pages.
+- The hosted models are accessed through **Adaption Labs**. (Whom we thank for supporting the competition especially providing free credit for allowing this work.)
 
 ## Safety note
 
-The "secret" is a random canary in a mock filesystem; no real systems, credentials or network egress are involved. The attacking coordinator is a prompted red-team agent, as in AI-control evaluations. The work is defensive: it measures how log tampering defeats oversight, and how a tamper-evident record restores it.
+The "secret" is a randomly generated canary in a mock filesystem; no real systems, credentials or network egress are involved. The attacking coordinator is a prompted red-team agent, as in AI-control evaluations. The work is defensive: it measures how log tampering defeats oversight and how a tamper-evident record restores it.
+
+## License
+
+MIT; see [LICENSE](LICENSE).
+
+### Thanks, Claude (Opus 5.5) for helping out with with this work.

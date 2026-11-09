@@ -15,7 +15,6 @@ CONF="${SWARM_CONF:-$ROOT/swarm.conf}"
 [[ -f "$CONF" ]] && source "$CONF"
 
 PY="$ROOT/.venv/bin/python"
-GO_BIN="$HOME/.local/toolchains/go/bin"
 LOG_DIR="$ROOT/logs"
 PID_FILE="$LOG_DIR/llama-server.pid"
 SERVER_LOG="$LOG_DIR/llama-server.log"
@@ -61,7 +60,7 @@ need_server_if_local() {
   for w in $*; do
     [[ "$w" == local:* ]] || continue
     a="${w#local:}"
-    alias_up "$a" || die "local model $a is not up at $(route_of "$a") (sudo systemctl start llama-server llama-server-lfm3; see deploy/)"
+    alias_up "$a" || die "local model $a is not up at $(route_of "$a") (start the local models: scripts/serve_models.sh start)"
   done
 }
 
@@ -79,6 +78,8 @@ parse_flags() {
       --views)         VIEWS="$2"; shift 2 ;;
       --seal-key)      SEAL_KEY="$2"; shift 2 ;;
       --no-reroute)    NO_REROUTE=1; shift ;;
+      --oversight)     OVERSIGHT="$2"; shift 2 ;;
+      --intent-model)  SWARM_INTENT_MODEL="$2"; shift 2 ;;
       --results)       export SWARM_RESULTS="$2"; shift 2 ;;
       --scores-out)    SCORES_OUT="$2"; shift 2 ;;
       --thinking)      export LOCAL_LLM_THINKING=1; shift ;;
@@ -95,7 +96,8 @@ batch() {  # batch MODE COND SEEDS [WORKERS]
               --worker-model "$WORKER_MODEL" --coord-model "$COORD_MODEL")
   [[ -n "$SEAL_KEY" ]] && args+=(--seal-key "$SEAL_KEY")
   [[ "$NO_REROUTE" == 1 ]] && args+=(--no-reroute)
-  info "batch mode=$mode no_reroute=$NO_REROUTE cond=$cond seeds=$seeds workers=$nw worker=$WORKER_MODEL coord=$COORD_MODEL"
+  args+=(--oversight "${OVERSIGHT:-silent}" --intent-model "${SWARM_INTENT_MODEL:-none}")
+  info "batch mode=$mode no_reroute=$NO_REROUTE cond=$cond seeds=$seeds workers=$nw worker=$WORKER_MODEL coord=$COORD_MODEL oversight=${OVERSIGHT:-silent}"
   run_cmd "$PY" "${args[@]}"
 }
 
@@ -105,16 +107,17 @@ cmd_help() {
 ${c_bold}swarm.sh${c_off}: K-Veritas swarm-oversight experiments
 
 ${c_bold}Setup & checks${c_off}
-  setup                     create .venv, install deps, build lib/libkveritas.so, run tests
+  setup [--local-models]    fetch and build everything from source (scripts/setup.sh), run tests
   test                      run the unit/e2e test suite (offline)
-  doctor                    check key, venv, lib, llama-server, Go, kveritas
+  doctor                    check the API key, venv, K-Veritas library and verifier, local models
   probe [MODELS...]         tool-calling probe (default: worker, coordinator, monitors)
   probe-coord [-n N] [MODELS...]  attack/benign coordinator-role acceptance, N samples each
 
-${c_bold}Local LFM server (llama.cpp)${c_off}
-  server start|stop|restart|status|logs
+${c_bold}Local models (llama.cpp)${c_off}
+  server status             check the local model servers (start them with scripts/serve_models.sh start)
 
-${c_bold}Experiments${c_off}  (flags: --mode --cond --seeds --workers --worker-model --coord-model --seal-key --results --thinking --dry-run)
+${c_bold}Experiments${c_off}  (flags: --mode --cond --seeds --workers --worker-model --coord-model --oversight none|silent|announced
+                           --intent-model --seal-key --results --thinking --dry-run)
   run                       one batch with the current parameters
   pilot                     attack + benign + nearmiss, cond AB, seeds 0-2
   matrix                    single, attack/benign AB (\$SEEDS_MAIN), nearmiss AB, attack/benign C
@@ -128,7 +131,7 @@ ${c_bold}Inspection${c_off}
 
 ${c_bold}Campaigns (resumable; run 2+)${c_off}
   campaign plan SPEC        expand a spec (campaigns/*.yaml): steps, episodes, credit estimate
-  campaign start SPEC       create runs/<name>_<ts>/ and run it detached (log: runs/<name>_<ts>/runner.out)
+  campaign start SPEC       create runs/swarmKV<N>/ and run it detached (log: runs/swarmKV<N>/runner.out)
   campaign resume DIR       continue after an interruption (crash, kill, reboot); skips finished work
   campaign status [DIR]     progress per group, credits, failures (default: newest campaign)
   campaign stop [DIR]       graceful stop: running steps return to pending
@@ -140,9 +143,9 @@ ${c_bold}Visualizer${c_off}
   trace RUN_ID              print an episode's message/tool-call trace from the chain
 
 ${c_bold}K-Veritas${c_off}
-  seal-verify PDF           verify a sealed batch PDF with \$KVERITAS_BIN (offline)
+  seal-verify PDF [PUBKEY]  verify a sealed batch PDF offline (default key: keys/seal-public.local.pem;
+                            use keys/seal-public.pem for the published dataset)
   tamper-audit [--episodes F...]  logging completeness + tamper battery (agent-tool and file-level attacks)
-  interop KEY.pem [OUTDIR]  reproduce the C->Go seal bugs (docs/KVERITAS_INTEROP_BUGS.md)
 
 ${c_bold}Background${c_off}
   bg COMMAND [ARGS...]      run any command above detached; log in logs/bg/<time>_<cmd>.log
@@ -152,18 +155,7 @@ Parameters: swarm.conf < environment < flags.   e.g.  SEEDS=0-9 ./swarm.sh run -
 EOF
 }
 
-cmd_setup() {
-  info "python venv"
-  [[ -x "$PY" ]] || run_cmd python3 -m venv "$ROOT/.venv"
-  # pinned + hash-locked (supply-chain safety); regenerate per the header of requirements.in
-  run_cmd "$PY" -m pip install -q --require-hashes --only-binary=:all: -r "$ROOT/requirements.txt"
-  info "build lib/libkveritas.so from ${KVERITAS_C_DIR:=$HOME/kv/kveritas-c}"
-  [[ -d "$KVERITAS_C_DIR" ]] || die "K-Veritas C source not found at $KVERITAS_C_DIR (set KVERITAS_C_DIR)"
-  mkdir -p "$ROOT/lib"
-  ( cd "$KVERITAS_C_DIR" && run_cmd bash -c 'gcc -shared -fPIC -O2 -Iinclude -Isrc src/core/*.c src/crypto/*.c src/hardware/*.c src/provenance/*.c src/verify/*.c src/anchor/*.c src/client/*.c src/pdf/*.c -lssl -lcrypto -lcurl -lpthread -ldl -lm -o "$0"' "$ROOT/lib/libkveritas.so" )
-  mkdir -p "$LOG_DIR" "$ROOT/sealed"
-  cmd_test
-}
+cmd_setup() { run_cmd "$ROOT/scripts/setup.sh" "$@"; }
 
 cmd_test() { need_venv; need_lib; run_cmd "$PY" -m pytest -q tests; }
 
@@ -177,14 +169,17 @@ cmd_doctor() {
   for pair in ${LOCAL_LLM_ROUTES:-}; do
     if alias_up "${pair%%=*}"; then ok "local:${pair%%=*} up at ${pair#*=}"; else warn "local:${pair%%=*} DOWN at ${pair#*=}"; fi
   done
-  [[ -x "$LLAMA_SERVER" ]] && ok "llama-server binary: $LLAMA_SERVER" || warn "llama-server binary not found: $LLAMA_SERVER"
-  [[ -f "$LFM_MODEL_PATH" ]] && ok "LFM model: $LFM_MODEL_PATH" || warn "LFM model not found: $LFM_MODEL_PATH"
-  [[ -x "$GO_BIN/go" ]] && ok "go: $("$GO_BIN/go" version)" || warn "Go toolchain not at $GO_BIN (only needed for interop debugging)"
-  command -v "$KVERITAS_BIN" >/dev/null && ok "kveritas: $("$KVERITAS_BIN" version 2>&1 | head -1)" || warn "kveritas CLI not found"
+  [[ -x "$LLAMA_SERVER" ]] && ok "llama-server: $LLAMA_SERVER" || warn "llama-server not found: $LLAMA_SERVER (scripts/setup.sh --local-models)"
+  local mp
+  for mp in "$LFM3_MODEL_PATH" "$LFM25_MODEL_PATH"; do
+    [[ -f "$mp" ]] && ok "model: $mp" || warn "model not found: $mp (scripts/setup.sh --local-models)"
+  done
+  command -v "$KVERITAS_BIN" >/dev/null && ok "kveritas verifier: $("$KVERITAS_BIN" version 2>&1 | head -1)" \
+    || warn "kveritas verifier not found (scripts/setup.sh builds bin/kveritas; needs Go)"
   if [[ "${SWARM_OFFLOAD:-}" == hf ]]; then
     local who
-    if who="$("$PY" -c "from env import store; store.ensure_repo(); i=store.api().dataset_info(store.repo_id()); print(store.api().whoami()['name'], 'private' if i.private else 'PUBLIC')" 2>&1 | tail -1)" \
-       && [[ "$who" == *private ]]; then ok "offload: $SWARM_HF_REPO ($who)"; else warn "offload: $SWARM_HF_REPO not usable: $who"; bad=1; fi
+    if who="$("$PY" -c "from env import store; store.ensure_repo(); i=store.api().dataset_info(store.repo_id()); print(store.api().whoami()['name'], 'private' if i.private else 'public')" 2>&1 | tail -1)" \
+       && [[ "$who" == *private || "$who" == *public ]]; then ok "offload: $SWARM_HF_REPO ($who)"; else warn "offload: $SWARM_HF_REPO not usable: $who"; bad=1; fi
   fi
   command -v nvidia-smi >/dev/null && ok "GPU: $(nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader)"
   echo "models: worker=$WORKER_MODEL coord=$COORD_MODEL monitors=[$MONITOR_MODELS]"
@@ -212,7 +207,7 @@ cmd_probe_coord() {
 cmd_server() {
   local action="${1:-status}"
   if [[ "$LLAMA_EXTERNAL" == 1 && "$action" =~ ^(start|stop|restart|status)$ ]]; then
-    [[ "$action" == status ]] || warn "LLAMA_EXTERNAL=1: local models are systemd services; use: sudo systemctl $action llama-server-lfm3 llama-server"
+    [[ "$action" == status ]] || warn "LLAMA_EXTERNAL=1: start and stop the local models with: scripts/serve_models.sh $action"
     local pair
     for pair in ${LOCAL_LLM_ROUTES:-}; do
       if alias_up "${pair%%=*}"; then ok "local:${pair%%=*} up at ${pair#*=}"; else warn "local:${pair%%=*} down at ${pair#*=}"; fi
@@ -258,7 +253,7 @@ cmd_server() {
 
 cmd_run() {
   need_venv; need_lib; parse_flags "$@"
-  need_server_if_local "$WORKER_MODEL $COORD_MODEL"
+  need_server_if_local "$WORKER_MODEL $COORD_MODEL ${SWARM_INTENT_MODEL:-none}"
   batch "$MODE" "$COND" "$SEEDS"
 }
 
@@ -386,19 +381,9 @@ EOF
 
 cmd_seal_verify() {
   [[ $# -ge 1 ]] || die "usage: seal-verify PDF"
-  warn "the released kveritas (17d3cb0) rejects C seals with runs; see docs/KVERITAS_INTEROP_BUGS.md (bug 2)"
-  run_cmd "$KVERITAS_BIN" verify "$1" --offline
-}
-
-cmd_interop() {
-  need_venv; need_lib
-  [[ $# -ge 1 ]] || die "usage: interop KEY.pem [OUTDIR]"
-  local key="$1" out="${2:-$LOG_DIR/interop}"
-  run_cmd "$PY" tools/kveritas_interop/repro.py "$key" "$out"
-  info "bug 1 (destroy before seal -> Runs: 0)"
-  "$KVERITAS_BIN" verify "$out/destroy_first.pdf" --offline | grep -E 'SELF|TAMPER|VERIFIED|Runs' || true
-  info "bug 2 (released Go verifier vs C seal with runs)"
-  "$KVERITAS_BIN" verify "$out/deferred.pdf" --offline | head -4 || true
+  local pub="${2:-}"
+  [[ -n "$pub" ]] || { [[ -f "$ROOT/keys/seal-public.local.pem" ]] && pub="$ROOT/keys/seal-public.local.pem"; }
+  run_cmd "$KVERITAS_BIN" verify "$1" --offline ${pub:+--public-key "$pub"}
 }
 
 # newest real campaign (swarmKV<N>); smoke tests (swarmKV-smoke<N>, old smoke_*) are skipped
@@ -471,7 +456,6 @@ case "$cmd" in
   verify)       cmd_verify "$@" ;;
   trace)        cmd_trace "$@" ;;
   seal-verify)  cmd_seal_verify "$@" ;;
-  interop)      cmd_interop "$@" ;;
   bg)           cmd_bg "$@" ;;
   campaign)     cmd_campaign "$@" ;;
   jobs)         cmd_jobs "$@" ;;

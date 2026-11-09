@@ -26,6 +26,9 @@ from env.agents import is_refusal  # noqa: E402
 from env.gateway import Gateway  # noqa: E402
 from env.sandbox import Sandbox, make_canary  # noqa: E402
 from verify_chain import reconcile_records, researcher_records  # noqa: E402
+from viz import progress as progress_mod  # noqa: E402
+
+PROGRESS = progress_mod.Tracker()  # rates/ETAs from successive polls
 
 STATIC = os.path.join(ROOT, "viz", "static")
 LIVE = os.path.join(ROOT, "logs", "live")
@@ -225,6 +228,17 @@ class Handler(SimpleHTTPRequestHandler):
         u = urlparse(self.path)
         if u.path == "/api/episodes":
             return self._json(list_episodes())
+        if u.path == "/api/progress":
+            # campaign progress (read-only): ?run=swarmKV1, default the newest campaign with a state.json
+            want = parse_qs(u.query).get("run", [""])[0]
+            cands = progress_mod.campaigns(include_smoke=True)
+            run_dir = next((d for d in cands if os.path.basename(d) == want), None) or next(iter(progress_mod.campaigns()), None)
+            if not run_dir:
+                return self._json({"run": None})
+            try:
+                return self._json(progress_mod.snapshot(run_dir, PROGRESS))
+            except (OSError, ValueError, KeyError) as e:
+                return self._json({"run": os.path.basename(run_dir), "error": str(e)})
         if u.path == "/api/runs":
             runs = {}
             for e in list_episodes():

@@ -1,4 +1,4 @@
-# Run 2: full campaign (planned 2026-11-07; see ~/.claude/plans/can-review-this-and-steady-coral.md)
+# Run 2: the full campaign reported in the paper (results: docs/results_swarmKV1.md).
 # All 7 Adaption models as workers/monitors/coordinators; LFM3 everywhere; LFM2.5 as monitor only.
 # Size (2026-11-08): 6 seeds per cell (was 10), re-routing ablation 10 seeds (was 20), 8 batches in parallel.
 # No-oversight baseline: oversight none / silent / announced (agents are TOLD; the researcher record is always kept).

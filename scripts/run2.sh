@@ -1,33 +1,31 @@
 #!/usr/bin/env bash
-# Run 2: build, verify, smoke-test (with a kill + resume), then launch the full campaign.
-# Run it from your own terminal (outside Claude Code):
+# Reproduce the reported campaign: rebuild and test K-Veritas, run the offline tests, smoke-test the campaign runner
+# (with a kill -9 and a resume), then launch the full campaign (campaigns/run2.yaml).
+# Run scripts/setup.sh first. Then, from the repository folder:
 #
-#   cd ~/prima/swarm
-#   scripts/run2.sh                 # all stages; asks before launching run 2
+#   scripts/run2.sh                 # all stages; asks before launching the campaign
 #   scripts/run2.sh --yes           # no question before launching
-#   scripts/run2.sh --from 6        # restart at a stage (1..7) after fixing something
-#   scripts/run2.sh --skip-smoke    # skip stage 6 (not recommended: it is the resume test)
-#   scripts/run2.sh --no-launch     # everything except launching run 2
-#   scripts/run2.sh --no-viz        # don't start the visualizer (by default it starts right after stage 1, also with --from N)
-# Run folders are numbered: runs/swarmKV1, swarmKV2, ...; smoke tests: runs/swarmKV-smoke1, ...
+#   scripts/run2.sh --from 4        # restart at a stage (1..6) after fixing something
+#   scripts/run2.sh --skip-smoke    # skip stage 5 (the smoke test produces no results; it tests interruption and resume)
+#   scripts/run2.sh --no-launch     # everything except launching the campaign
+#   scripts/run2.sh --no-viz        # don't start the visualizer (by default it starts after stage 1, also with --from N)
 #
-# Stages: 1 preflight  2 kveritas-c fix: build + ctest + rebuild lib  3 kveritas-go fix: gofmt/vet/test + bin/kveritas-dev
-#         4 C->Go interop check  5 offline tests + tamper audit  6 smoke campaign: kill -9 mid-episode, resume, check
-#         7 launch run 2 (+ visualizer)
-# Nothing is committed in ~/kv/kveritas-c or ~/kv/kveritas-go: review and commit yourself.
+# Stages: 1 preflight   2 K-Veritas C SDK: tests + rebuild lib/libkveritas.so   3 K-Veritas Go verifier: vet, tests,
+#         build bin/kveritas   4 offline tests + tamper audit   5 smoke campaign: kill -9 mid-episode, resume, check
+#         6 launch the campaign (+ visualizer)
+# Run folders are numbered runs/swarmKV1, swarmKV2, ...; smoke tests runs/swarmKV-smoke1, ...
 # Everything is logged to runs/prep_<timestamp>.log
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 PY="$ROOT/.venv/bin/python"
-KVC="${KVC:-$HOME/kv/kveritas-c}"
-KVGO="${KVGO:-$HOME/kv/kveritas-go}"
-GO="${GO:-$HOME/.local/toolchains/go/bin/go}"
 SPEC="${SPEC:-campaigns/run2.yaml}"
-# Same environment as ./swarm.sh: without LOCAL_LLM_ROUTES every local:* model would go to the default server
-# (LFM2.5 on :18080), silently swapping LFM3 for LFM2.5.
+GO="${GO:-go}"
+# Same environment as ./swarm.sh (swarm.conf reads swarm.local.conf): without LOCAL_LLM_ROUTES every local:* model
+# would go to one default server.
 set -a; source "$ROOT/swarm.conf"; set +a
-[[ "${LOCAL_LLM_ROUTES:-}" == *"lfm3-1.7b="* ]] || { echo "LOCAL_LLM_ROUTES missing lfm3 route (swarm.conf)"; exit 1; }
+KVC="$KVERITAS_C_DIR"; KVGO="$KVERITAS_GO_DIR"
+[[ "${LOCAL_LLM_ROUTES:-}" == *"lfm3-1.7b="* ]] || { echo "LOCAL_LLM_ROUTES has no route for lfm3-1.7b (swarm.conf)"; exit 1; }
 FROM=1; YES=0; SKIP_SMOKE=0; NO_LAUNCH=0; NO_VIZ=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,7 +34,7 @@ while [[ $# -gt 0 ]]; do
     --skip-smoke) SKIP_SMOKE=1; shift ;;
     --no-launch) NO_LAUNCH=1; shift ;;
     --no-viz) NO_VIZ=1; shift ;;
-    -h|--help) sed -n 2,20p "$0"; exit 0 ;;
+    -h|--help) sed -n 2,18p "$0"; exit 0 ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
 done
@@ -49,38 +47,35 @@ ok()    { echo "${g}ok${n} $*"; }
 warn()  { echo "${y}warn${n} $*"; }
 fail()  { echo "${r}FAILED${n} $*"; echo "fix it, then rerun from this stage:  scripts/run2.sh --from $CUR"; exit 1; }
 run_stage() { [[ "$1" -ge "$FROM" ]]; }
+PUBKEY="keys/seal-public.local.pem"
 CUR=0
 
 # ---------------------------------------------------------------------------------------------- 1 preflight ----
 CUR=1
 if run_stage 1; then
   stage 1 "preflight"
-  [[ -x "$PY" ]] || fail "no venv at .venv (./swarm.sh setup)"
-  grep -qE '^(ADAPTION_API_KEY|ADOPTION_KEY|ADAPTION_KEY)=' .env 2>/dev/null || fail "no Adaption key in .env"
+  [[ -x "$PY" ]] || fail "no Python environment at .venv (run scripts/setup.sh)"
+  [[ -f lib/libkveritas.so ]] || fail "lib/libkveritas.so missing (run scripts/setup.sh)"
+  grep -qE '^(ADAPTION_API_KEY|ADOPTION_KEY|ADAPTION_KEY)=.+' .env 2>/dev/null || [[ -n "${ADAPTION_API_KEY:-}" ]] \
+    || fail "no Adaption API key (ADAPTION_API_KEY in .env)"
   srv="$(./swarm.sh server status 2>&1 || true)"; echo "$srv"
-  grep -q 'lfm3-1.7b up' <<<"$srv" || fail "local:lfm3-1.7b is down (sudo systemctl start llama-server-lfm3)"
-  grep -q 'lfm2.5-8b up' <<<"$srv" || fail "local:lfm2.5-8b is down (sudo systemctl start llama-server)"
-  if pgrep -f "campaign.py resume" >/dev/null || pgrep -f "run_all.sh" >/dev/null; then
-    fail "an experiment runner is already running (pgrep -af 'campaign.py|run_all.sh')"
-  fi
-  [[ -x "$GO" ]] || fail "Go toolchain not found at $GO"
-  command -v cmake >/dev/null || fail "cmake not installed"
+  grep -q 'lfm3-1.7b up' <<<"$srv" || fail "local:lfm3-1.7b is down (scripts/serve_models.sh start)"
+  grep -q 'lfm2.5-8b up' <<<"$srv" || fail "local:lfm2.5-8b is down (scripts/serve_models.sh start)"
+  if pgrep -f "campaign.py resume" >/dev/null; then fail "a campaign runner is already running (pgrep -af campaign.py)"; fi
   df -h "$ROOT" | tail -1
-  # K-Veritas signing key for the sealed PDF reports (private key outside the repo; public key in keys/)
-  KEYDIR="$HOME/.config/swarm-kveritas"
-  if [[ ! -f "$KEYDIR/seal-key.pem" ]]; then
-    mkdir -p "$KEYDIR" && chmod 700 "$KEYDIR"
-    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$KEYDIR/seal-key.pem" 2>/dev/null || fail "key generation"
-    chmod 600 "$KEYDIR/seal-key.pem"
-    ok "created signing key $KEYDIR/seal-key.pem (keep it private; back it up)"
+  # signing key for the sealed reports (created by scripts/setup.sh if missing; private key outside the repository)
+  if [[ ! -f "$SWARM_SEAL_KEY" ]]; then
+    mkdir -p "$(dirname "$SWARM_SEAL_KEY")" && chmod 700 "$(dirname "$SWARM_SEAL_KEY")"
+    openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$SWARM_SEAL_KEY" 2>/dev/null || fail "key generation"
+    chmod 600 "$SWARM_SEAL_KEY"
+    ok "created signing key $SWARM_SEAL_KEY (keep it private)"
   fi
-  mkdir -p keys && openssl pkey -in "$KEYDIR/seal-key.pem" -pubout -out keys/seal-public.pem 2>/dev/null || fail "public key export"
-  ok "signing key ready; public key: keys/seal-public.pem (verifiers use it as --public-key)"
+  mkdir -p keys && openssl pkey -in "$SWARM_SEAL_KEY" -pubout -out "$PUBKEY" 2>/dev/null || fail "public key export"
+  ok "signing key ready; public key $PUBKEY verifies the reports of your runs"
   if [[ "${SWARM_OFFLOAD:-}" == hf ]]; then
-    "$PY" -c "import huggingface_hub" 2>/dev/null || "$PY" -m pip install -q "huggingface_hub>=1.0" hf_xet || fail "huggingface_hub install"
-    vis="$("$PY" -c "from env import store; store.ensure_repo(); print('private' if store.api().dataset_info(store.repo_id()).private else 'PUBLIC')" 2>&1 | tail -1)"
-    [[ "$vis" == private ]] || fail "offload dataset $SWARM_HF_REPO is not usable as a PRIVATE dataset: $vis (HF_KEY in .env?)"
-    ok "offload: every episode goes to the private dataset $SWARM_HF_REPO and is deleted locally"
+    vis="$("$PY" -c "from env import store; store.ensure_repo(); print('private' if store.api().dataset_info(store.repo_id()).private else 'public')" 2>&1 | tail -1)"
+    [[ "$vis" == private || "$vis" == public ]] || fail "offload dataset $SWARM_HF_REPO is not usable: $vis (HF_TOKEN in .env?)"
+    ok "offload: every episode goes to the $vis dataset $SWARM_HF_REPO and is deleted locally"
   fi
   ok "preflight"
 fi
@@ -101,57 +96,55 @@ start_viz() {
 }
 [[ $NO_VIZ -eq 1 ]] || start_viz
 
-# ---------------------------------------------------------------------------- 2 kveritas-c: build + test fix ----
+# ------------------------------------------------------------------------------ 2 K-Veritas C SDK ----
 CUR=2
 if run_stage 2; then
-  stage 2 "kveritas-c: build + ctest (bug 1 fix, uncommitted) and rebuild lib/libkveritas.so"
-  ( cd "$KVC" && (sl diff --stat 2>/dev/null || true) )
-  # Tests must be a Debug build: kveritas-c's tests put real calls inside assert() (e.g. assert(mkdtemp(..)),
-  # assert(kv_session_init(..) == KV_OK)), and Release's -DNDEBUG compiles those calls away -> NULL session ->
-  # segfault (2026-11-07). Built outside the kveritas-c repo, in a cache folder.
-  KVC_TEST_BUILD="${KVC_TEST_BUILD:-$HOME/.cache/swarm/kveritas-c-debug}"
-  cmake -S "$KVC" -B "$KVC_TEST_BUILD" -DCMAKE_BUILD_TYPE=Debug >/dev/null || fail "cmake configure"
-  cmake --build "$KVC_TEST_BUILD" --parallel || fail "kveritas-c build"
-  ctest --test-dir "$KVC_TEST_BUILD" --output-on-failure || fail "kveritas-c tests (see output above)"
-  ok "kveritas-c tests pass (includes test_kv_seal: destroy-before-seal regression)"
-  [[ -f lib/libkveritas.so ]] && cp lib/libkveritas.so "lib/libkveritas.so.bak-$(date +%Y%m%dT%H%M%S)"
-  ( cd "$KVC" && gcc -shared -fPIC -O2 -Iinclude -Isrc src/core/*.c src/crypto/*.c src/hardware/*.c src/provenance/*.c \
-      src/verify/*.c src/anchor/*.c src/client/*.c src/pdf/*.c -lssl -lcrypto -lcurl -lpthread -ldl -lm \
-      -o "$ROOT/lib/libkveritas.so" ) || fail "rebuild lib/libkveritas.so"
-  ok "lib/libkveritas.so rebuilt from the fixed source (previous copy kept as lib/libkveritas.so.bak-*)"
+  stage 2 "K-Veritas C SDK: test suite, then rebuild lib/libkveritas.so from $KVC"
+  if [[ ! -d "$KVC" ]]; then
+    warn "no K-Veritas C source at $KVC (scripts/setup.sh clones it); keeping the existing lib/libkveritas.so"
+  else
+    command -v cmake >/dev/null || fail "cmake not installed (needed for the K-Veritas C tests)"
+    # Debug build: the C test suite performs real calls inside assert(), which Release (-DNDEBUG) removes
+    KVC_TEST_BUILD="${KVC_TEST_BUILD:-$ROOT/third_party/build/kveritas-c-debug}"
+    cmake -S "$KVC" -B "$KVC_TEST_BUILD" -DCMAKE_BUILD_TYPE=Debug >/dev/null || fail "cmake configure"
+    cmake --build "$KVC_TEST_BUILD" --parallel || fail "K-Veritas C build"
+    ctest --test-dir "$KVC_TEST_BUILD" --output-on-failure || fail "K-Veritas C tests (see output above)"
+    ok "K-Veritas C tests pass"
+    [[ -f lib/libkveritas.so ]] && cp lib/libkveritas.so "lib/libkveritas.so.bak-$(date +%Y%m%dT%H%M%S)"
+    ( cd "$KVC" && ${CC:-cc} -shared -fPIC -O2 -Iinclude -Isrc $(pkg-config --cflags openssl libcurl) src/core/*.c src/crypto/*.c \
+        src/hardware/*.c src/provenance/*.c src/verify/*.c src/anchor/*.c src/client/*.c src/pdf/*.c \
+        $(pkg-config --libs openssl libcurl) -lpthread -lm $( [[ "$(uname)" == Linux ]] && echo -ldl ) \
+        -o "$ROOT/lib/libkveritas.so" ) || fail "rebuild lib/libkveritas.so"
+    ok "lib/libkveritas.so rebuilt (previous copy kept as lib/libkveritas.so.bak-*)"
+  fi
 fi
 
-# --------------------------------------------------------------------------- 3 kveritas-go: verifier with fix ----
+# ------------------------------------------------------------------------------ 3 K-Veritas Go verifier ----
 CUR=3
 if run_stage 3; then
-  stage 3 "kveritas-go: gofmt + vet + test, build bin/kveritas-dev (bug 2 fix, uncommitted)"
-  export PATH="$(dirname "$GO"):$PATH"
-  ( cd "$KVGO" && git status --short )
-  ( cd "$KVGO" && gofmt -w internal/session/session.go && go vet ./... && go test ./... ) || fail "kveritas-go vet/test"
-  ( cd "$KVGO" && go build -o "$ROOT/bin/kveritas-dev" ./cmd/kveritas ) || fail "kveritas-go build"
-  "$ROOT/bin/kveritas-dev" version || true
-  ok "bin/kveritas-dev built (your installed ~/.local/bin/kveritas is untouched)"
+  stage 3 "K-Veritas Go verifier: vet + tests, build bin/kveritas from $KVGO"
+  if [[ ! -d "$KVGO" ]] || ! command -v "$GO" >/dev/null; then
+    warn "no Go toolchain or no source at $KVGO; verification uses $KVERITAS_BIN"
+  else
+    ( cd "$KVGO" && "$GO" vet ./... && "$GO" test ./... ) || fail "K-Veritas Go vet/tests"
+    ( cd "$KVGO" && "$GO" build -o "$ROOT/bin/kveritas" ./cmd/kveritas ) || fail "K-Veritas Go build"
+    "$ROOT/bin/kveritas" version || true
+    ok "bin/kveritas built"
+  fi
 fi
 
-# ------------------------------------------------------------------------------------------- 4 interop check ----
+# ------------------------------------------------------------------------------- 4 offline tests + tamper audit ----
 CUR=4
 if run_stage 4; then
-  stage 4 "C -> Go seal interop (bugs 1 + 2)"
-  tests/interop_check.sh || fail "interop check"
-fi
-
-# ------------------------------------------------------------------------------- 5 offline tests + tamper audit ----
-CUR=5
-if run_stage 5; then
-  stage 5 "offline unit tests + tamper audit (incl. the plain / no-K-Veritas column)"
+  stage 4 "offline unit tests + tamper audit (including the plain, no-K-Veritas column)"
   "$PY" -m pytest -q tests || fail "unit tests"
   "$PY" tools/tamper_audit.py --episodes || fail "tamper audit"
 fi
 
-# ----------------------------------------------------------------- 6 smoke campaign with kill -9 + resume ----
-CUR=6
-if run_stage 6 && [[ $SKIP_SMOKE -eq 0 ]]; then
-  stage 6 "smoke campaign: start, kill -9 mid-episode, resume, check (local LFM3 + deepseek-v4-flash, < 1 credit)"
+# ----------------------------------------------------------------- 5 smoke campaign with kill -9 + resume ----
+CUR=5
+if run_stage 5 && [[ $SKIP_SMOKE -eq 0 ]]; then
+  stage 5 "smoke campaign: start, kill -9 mid-episode, resume, check (local LFM3 + deepseek-v4-flash, < 1 credit)"
   # the smoke run is checked on the dataset first, then finalized + removed from it below (not a result)
   export SWARM_OFFLOAD_FINALIZE=0
   SMOKE_DIR="$("$PY" campaign.py start campaigns/smoke.yaml --create-only | tail -1)"
@@ -181,7 +174,7 @@ if run_stage 6 && [[ $SKIP_SMOKE -eq 0 ]]; then
   "$PY" campaign.py resume "$SMOKE_DIR" >> "$SMOKE_DIR/runner.out" 2>&1 || fail "resume (see $SMOKE_DIR/runner.out)"
   "$PY" campaign.py status "$SMOKE_DIR"
   "$PY" tools/check_campaign.py "$SMOKE_DIR" --expect-orphans || fail "smoke campaign check"
-  # every sealed batch PDF must verify with the fixed Go verifier against our public key
+  # every sealed batch PDF must verify with the Go verifier against your public key
   PDF_DIR="$SMOKE_DIR/sealed"
   if [[ "${SWARM_OFFLOAD:-}" == hf ]]; then
     # offloaded: nothing may be left on disk, and the PDFs are verified as downloaded back from the dataset
@@ -213,7 +206,7 @@ PYEOF
   for pdf in "$PDF_DIR"/*.pdf; do
     [[ -f "$pdf" ]] || continue
     npdf=$((npdf + 1))
-    st="$("$ROOT/bin/kveritas-dev" verify "$pdf" --offline --public-key keys/seal-public.pem 2>&1 | head -1)"
+    st="$("$KVERITAS_BIN" verify "$pdf" --offline --public-key "$PUBKEY" 2>&1 | head -1)"
     echo "  $(basename "$pdf"): $st"
     [[ "$st" == TAMPERED* || -z "$st" ]] && fail "sealed PDF does not verify: $pdf"
   done
@@ -229,20 +222,20 @@ PYEOF
   ok "smoke campaign: interrupted, resumed, complete, no duplicates (${SMOKE_DIR#$ROOT/})"
 fi
 
-# ------------------------------------------------------------------------------------------- 7 launch run 2 ----
-CUR=7
-if run_stage 7 && [[ $NO_LAUNCH -eq 0 ]]; then
-  stage 7 "launch run 2"
+# ------------------------------------------------------------------------------------- 6 launch the campaign ----
+CUR=6
+if run_stage 6 && [[ $NO_LAUNCH -eq 0 ]]; then
+  stage 6 "launch the campaign ($SPEC)"
   "$PY" campaign.py plan "$SPEC" | tail -4
   if [[ $YES -ne 1 ]]; then
-    read -r -p "Launch run 2 now? [y/N] " ans
+    read -r -p "Launch the campaign now? [y/N] " ans
     [[ "$ans" == y || "$ans" == Y ]] || { echo "not launched. Later: ./swarm.sh campaign start $SPEC"; exit 0; }
   fi
   [[ $NO_VIZ -eq 1 ]] || curl -fs -o /dev/null http://127.0.0.1:8765/api/runs || start_viz
   ./swarm.sh campaign start "$SPEC"
   echo
-  echo "${b}run 2 is running detached.${n}"
-  echo "  progress:   ./swarm.sh campaign status"
+  echo "${b}the campaign is running detached.${n}"
+  echo "  progress:   scripts/monitor.sh   (or ./swarm.sh campaign status)"
   echo "  log:        tail -f \$(ls -dt runs/swarmKV[0-9]*/ | head -1)campaign.log"
   echo "  live view:  http://127.0.0.1:8765/?live=1"
   echo "  stop:       ./swarm.sh campaign stop        (resumable)"

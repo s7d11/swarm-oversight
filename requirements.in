@@ -2,9 +2,11 @@
 #   uv pip compile requirements.in -o requirements.txt --generate-hashes \
 #     --python-version 3.11 --exclude-newer <date ~2 weeks ago> \
 #     --exclude-newer-package adaption=<date after the adaption release you want>
-adaption==0.19.0   # vendor SDK; code targets 0.19.0 (experiment.md)
+adaption==0.19.0   # Adaption Labs SDK (hosted models); the code targets 0.19.0
 numpy
 scikit-learn
 matplotlib
 pyyaml
 pytest
+huggingface_hub    # optional record offload to a Hugging Face dataset (env/store.py)
+hf_xet             # fast transfers for huggingface_hub
